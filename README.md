@@ -2,6 +2,8 @@
 
 This is an extremely heavily modified fork of the now defunct [AWS Pricing sheet addon by Strake](https://github.com/getstrake/aws-pricing-sheets-addon).
 
+It offers functions that integrate both AWS and GCP pricing, as well as the ability to load up and cache bulk price lists for a set of predetermined instance types within a given region, so you can avoid making hundreds of API calls for every tiny change.
+
 It relies on multiple datastores we need to self maintain, cobbled together from various sources, currently living in Firestore: https://console.cloud.google.com/firestore/databases/-default-/data/panel/aws_ebs_volumes?project=tech-solutions-appscripts
 
 Current template sheets implementing this:
