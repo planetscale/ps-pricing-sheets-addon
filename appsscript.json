@@ -1,7 +1,7 @@
 {
   "addOns": {
     "common": {
-      "name": "AWS Pricing by Strake™",
+      "name": "Instance Pricing for PlanetScale",
       "logoUrl": "https://cdn.x.macroscope.io/assets/aws-pricing/logo.png",
       "homepageTrigger": {
         "runFunction": "buildSideBar"
@@ -10,6 +10,13 @@
     "sheets": {}
   },
   "dependencies": {
+    "libraries": [
+      {
+        "userSymbol": "FirestoreApp",
+        "version": "33",
+        "libraryId": "1VUSl4b1r1eoNcRWotZM3e87ygkxvXltOgyDZhixqncz9lQ3MjfT1iKFw"
+      }
+    ]
   },
   "exceptionLogging": "STACKDRIVER",
   "executionApi": {
@@ -21,13 +28,10 @@
     "https://www.googleapis.com/auth/script.external_request",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/spreadsheets.currentonly"
-
   ],
-  "timeZone": "America/Denver",
   "urlFetchWhitelist": [
-    "https://cdn.x.macroscope.io/aws-pricing/",
-    "https://www.google-analytics.com/",
-    "https://api.hubapi.com/",
-    "https://api.segment.io/"
+    "https://oauth2.googleapis.com/",
+    "https://firestore.googleapis.com/",
+    "https://api.planetscale.com/"
   ]
 }
