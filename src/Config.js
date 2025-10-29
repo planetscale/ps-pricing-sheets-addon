@@ -1,14 +1,19 @@
+// Helper function to safely get and split script properties
+function getScriptPropertyArray(propertyName, defaultValue) {
+  var value = PropertiesService.getScriptProperties().getProperty(propertyName);
+  if (!value) {
+    throw `Missing required script property: ${propertyName}. Please add it to Script Properties.`;
+  }
+  return value.split(',').map(function(item) { return item.trim(); });
+}
+
 const cfg = {
   psWebApi: 'https://api.planetscale.com/www/',
   hoursPerMonth: 730,
-  awsEc2InstanceFamilyFilter: PropertiesService.getScriptProperties().getProperty('awsEc2InstanceFamilyFilter').split(','), // These limit the number of instance families we check for EC2, to limit the sizes of our FireStore calls.
-  awsEc2InstanceSizeFilter: PropertiesService.getScriptProperties().getProperty('awsEc2InstanceSizeFilter').split(','), // These limit the number of instance sizes we check for EC2 and RDS, to limit the sizes of our FireStore calls.
-  gcpComputeInstanceFamilyFilter: PropertiesService.getScriptProperties().getProperty('gcpComputeInstanceFamilyFilter').split(','), // These limit the number of instance families we check for GCP, to limit the sizes of our FireStore calls.
-  gcpComputeInstanceSizeFilter: PropertiesService.getScriptProperties().getProperty('gcpComputeInstanceSizeFilter').split(','), // These limit the number of instance sizes we check for GCP, to limit the sizes of our FireStore calls.
-  fsEmail: PropertiesService.getScriptProperties().getProperty('fs_email'),
-  fsKey: PropertiesService.getScriptProperties().getProperty('fs_key').replace(/\\n/g, '\n'),
-  fsLimit: 30,
-  fsProjectId: PropertiesService.getScriptProperties().getProperty('fs_projectid'),
+  awsEc2InstanceFamilyFilter: getScriptPropertyArray('awsEc2InstanceFamilyFilter'), // These limit the number of instance families we check for EC2
+  awsEc2InstanceSizeFilter: getScriptPropertyArray('awsEc2InstanceSizeFilter'), // These limit the number of instance sizes we check for EC2
+  gcpComputeInstanceFamilyFilter: getScriptPropertyArray('gcpComputeInstanceFamilyFilter'), // These limit the number of instance families we check for GCP
+  gcpComputeInstanceSizeFilter: getScriptPropertyArray('gcpComputeInstanceSizeFilter'), // These limit the number of instance sizes we check for GCP
   environment: "production", // should be either "development" or "production",
   supportedProviders: {
     'planetscale': {

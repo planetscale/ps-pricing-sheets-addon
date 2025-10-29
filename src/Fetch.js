@@ -113,32 +113,47 @@ function formatPSDB(allProducts) {
 }
 
 function fetchGCPCompute(filterTypes, options) {
-    let targetColl = 'gcp_instances';
-
-    fs = getFirestore();
-
-    let responses = [];
-
-    try{
-        fr = fs.getDocuments(targetColl);
-    }catch(err){
-        throw `${err}`;
+    var { region, purchaseType, purchaseTerm, cudType } = options;
+    cudType = cudType || 'flexi'; // Default to flexi CUD
+    
+    var responses = [];
+    
+    // Strategy: Same as AWS - chunk large sets into batches of 10
+    if (filterTypes.length <= 3) {
+        // Small set - use individual queries
+        Logger.log(`Using individual GraphQL queries for ${filterTypes.length} GCP instances (${purchaseType})`);
+        responses = fetchGCPComputeGraphQL(filterTypes, region, purchaseType, purchaseTerm, cudType);
+    } else {
+        // Large set - split into chunks of 10 and batch each chunk
+        var chunkSize = 10;
+        var totalChunks = Math.ceil(filterTypes.length / chunkSize);
+        
+        Logger.log(`Using chunked batched GraphQL for ${filterTypes.length} GCP instances (${purchaseType})`);
+        Logger.log(`Splitting into ${totalChunks} batches of up to ${chunkSize} instances each`);
+        
+        for (var i = 0; i < filterTypes.length; i += chunkSize) {
+            var chunk = filterTypes.slice(i, i + chunkSize);
+            var chunkNum = Math.floor(i / chunkSize) + 1;
+            
+            Logger.log(`Processing GCP batch ${chunkNum}/${totalChunks} (${chunk.length} instances)...`);
+            
+            try {
+                var chunkResults = fetchGCPComputeGraphQLBatched(chunk, region, purchaseType, purchaseTerm, cudType);
+                responses = responses.concat(chunkResults);
+                Logger.log(`  ✅ Batch ${chunkNum} completed: ${chunkResults.length} instances`);
+            } catch (err) {
+                Logger.log(`  ❌ Batch ${chunkNum} failed: ${err}`);
+                Logger.log(`  Falling back to individual queries for this batch...`);
+                var individualResults = fetchGCPComputeGraphQL(chunk, region, purchaseType, purchaseTerm, cudType);
+                responses = responses.concat(individualResults);
+            }
+        }
+        
+        Logger.log(`Total GCP instances fetched: ${responses.length}/${filterTypes.length}`);
     }
 
-    fr.forEach(doc => {
-        Object.getOwnPropertyNames(doc.obj).forEach(prop => {
-            filterTypes.forEach(insType => {
-                if(prop == insType) {
-                    let newObj = doc.obj[prop];
-                    if (newObj.regions && newObj.regions[options.region]){
-                        newObj.regions = {[options.region]: newObj.regions[options.region]};
-                        newObj.instance_type = prop;
-                        responses.push(newObj);
-                    }
-                }
-            })
-        })
-    })
+    // GCP committed-use is now handled in the main query above
+    // Discounts are applied based on cudType (flexi or resource)
 
     return formatGCPCompute(responses);
 }
@@ -152,10 +167,13 @@ function formatGCPCompute(allProducts) {
       allProducts[i].instance_family = famSize[0];
       allProducts[i].family = famSize[1];
       allProducts[i].instance_size = famSize[2];
-      allProducts[i].memory = allProducts[i].specs ? parseFloat(allProducts[i].specs.memory) : 0;
-      allProducts[i].vCPU = allProducts[i].specs ? parseFloat(allProducts[i].specs.cores) : 0;
+      
+      // vCPU and memory are now stored directly (unified with AWS structure)
+      // Keep them as-is, or fall back to 0 if missing
+      allProducts[i].memory = allProducts[i].memory || 0;
+      allProducts[i].vCPU = allProducts[i].vCPU || 0;
 
-      // Determine PS family
+      // Determine PS family first
       switch (allProducts[i].family){
         case 'standard':
           allProducts[i].ps_instance_class = 'general';
@@ -168,8 +186,29 @@ function formatGCPCompute(allProducts) {
           break;
       }
       //if(allProducts[i].instance_type.includes('localssd')) allProducts[i].ps_instance_class = 'metal';
-      if (allProducts[i].instance_family == 'n2d'){
+      if (allProducts[i].instance_family == 'n2d' || allProducts[i].instance_family == 'z3'){
         allProducts[i].ps_instance_class = 'metal';
+      }
+      
+      // Calculate minimum onboard storage (local SSD) - ONLY for metal instances
+      // GCP local SSDs come in 375GB units
+      if (allProducts[i].ps_instance_class === 'metal') {
+        var instanceSize = parseInt(famSize[2]) || 0;
+        var minSSDUnits = 1;
+        
+        if (instanceSize > 4) {
+          minSSDUnits = instanceSize / 8;
+        }
+        
+        // c2d family has specific limits
+        if (allProducts[i].instance_family == 'c2d') {
+          minSSDUnits = 1;
+        }
+        
+        // Each local SSD unit is 375GB
+        allProducts[i].onboard_storage = minSSDUnits * 375;
+      } else {
+        allProducts[i].onboard_storage = 0;
       }
     }
 
@@ -177,38 +216,46 @@ function formatGCPCompute(allProducts) {
 }
 
 function fetchAWSEC2(filterTypes, options) {
-    var { region, platform } = options;
+    var { region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption } = options;
 
-    let targetColl = 'aws_ec2_instances';
-    let filterField = 'instance_type';
-
-    fs = getFirestore();
-
-    let lim = parseInt(cfg.fsLimit);
-    const chunks = Math.ceil(filterTypes.length / lim);
-
-    let responses = [];
-
-    for (var i = 0; i < chunks; i++) {
-        let fr = [];
-        let chunk = filterTypes.slice(i * lim, Math.min((i+1) * lim,filterTypes.length));
-        try{
-            fr = fs.query(targetColl).Where(filterField, "IN", chunk).Execute();
-        }catch(err){
-            throw `${err}`;
-        }
-        fr.forEach(r => {
-
-            if(r.obj.pricing[region] && r.obj.pricing[region][platform]) {
-                r.obj.pricing = {
-                    [region]: {
-                        [platform]: r.obj.pricing[region][platform],
-                    },
-                }
-                //r.obj.selected_price = getPrice('ec2',r.obj,options);
-                responses.push(r.obj);
+    var responses = [];
+    
+    // Strategy: 
+    // - 1-3 instances: Individual queries (batching overhead not worth it)
+    // - 4+ instances: Use batched queries in chunks of 10 (max per batch to avoid "Argument too large")
+    
+    if (filterTypes.length <= 3) {
+        // Small set - use individual queries
+        Logger.log(`Using individual GraphQL queries for ${filterTypes.length} AWS EC2 instances (${purchaseType})`);
+        responses = fetchAWSEC2GraphQL(filterTypes, region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption);
+    } else {
+        // Large set - split into chunks of 10 and batch each chunk
+        var chunkSize = 10;
+        var totalChunks = Math.ceil(filterTypes.length / chunkSize);
+        
+        Logger.log(`Using chunked batched GraphQL for ${filterTypes.length} AWS EC2 instances (${purchaseType})`);
+        Logger.log(`Splitting into ${totalChunks} batches of up to ${chunkSize} instances each`);
+        
+        for (var i = 0; i < filterTypes.length; i += chunkSize) {
+            var chunk = filterTypes.slice(i, i + chunkSize);
+            var chunkNum = Math.floor(i / chunkSize) + 1;
+            
+            Logger.log(`Processing batch ${chunkNum}/${totalChunks} (${chunk.length} instances)...`);
+            
+            try {
+                var chunkResults = fetchAWSEC2GraphQLBatched(chunk, region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption);
+                responses = responses.concat(chunkResults);
+                Logger.log(`  ✅ Batch ${chunkNum} completed: ${chunkResults.length} instances`);
+            } catch (err) {
+                Logger.log(`  ❌ Batch ${chunkNum} failed: ${err}`);
+                // If a batch fails, try individual queries for that chunk only
+                Logger.log(`  Falling back to individual queries for this batch...`);
+                var individualResults = fetchAWSEC2GraphQL(chunk, region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption);
+                responses = responses.concat(individualResults);
             }
-        });
+        }
+        
+        Logger.log(`Total instances fetched: ${responses.length}/${filterTypes.length}`);
     }
 
     return formatAWSEC2(responses);
@@ -233,14 +280,14 @@ function formatAWSEC2(allProducts) {
           allProducts[i].ps_instance_class = 'compute';
           break;
         case 'r':
-          allProducts[i].ps_instance_class = (allProducts[i].instance_family == 'r6id') ? 'metal' : 'memory';
+          allProducts[i].ps_instance_class = 'memory';
           break;
         case 'm':
-          allProducts[i].ps_instance_class = (allProducts[i].instance_family == 'm6id') ? 'metal' : 'general';
+          allProducts[i].ps_instance_class = 'general';
           break;
-        case 'i':
-          allProducts[i].ps_instance_class = 'metal';
-          break;
+      }
+      if(allProducts[i].onboard_storage > 0){
+        allProducts[i].ps_instance_class = 'metal';
       }
 
     }
@@ -249,20 +296,22 @@ function formatAWSEC2(allProducts) {
 }
 
 function fetchAWSEBS(filterTypes, options) {
-    let targetColl = 'aws_ebs_volumes';
-    let filterField = 'rzCode';
-
-    fs = getFirestore();
-
+    // filterTypes contains region codes for EBS
     let responses = [];
-
-    try{
-        fr = fs.query(targetColl).Where(filterField, "IN", filterTypes).Execute();
-    }catch(err){
-        throw `${err}`;
-    }
-    fr.forEach(r => {
-        responses.push(r.obj);
+    
+    // For EBS, filterTypes is actually an array of regions
+    filterTypes.forEach(function(region) {
+        // Fetch pricing for common volume types
+        ['gp3', 'gp2', 'io2', 'io1'].forEach(function(volumeType) {
+            try {
+                let volumeData = fetchAWSEBSGraphQL(region, volumeType);
+                if (volumeData) {
+                    responses.push(volumeData);
+                }
+            } catch (err) {
+                Logger.log(`Error fetching EBS ${volumeType} for ${region}: ${err}`);
+            }
+        });
     });
 
     return responses;
@@ -294,9 +343,4 @@ function generateComputeInstanceChoices() {
       });
     }); 
   return instanceTypes;
-}
-
-function getFirestore(){
-    const fs = FirestoreApp.getFirestore(cfg.fsEmail, cfg.fsKey, cfg.fsProjectId);
-    return fs;
 }

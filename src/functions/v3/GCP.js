@@ -1,37 +1,49 @@
 /**
  * Returns the hourly cost for an instance type in a given region. 
- * For reserved purchaseTypes, purchaseTerm and paymentOption are required.
+ * For committed-use, purchaseTerm and cudType are required.
  *
  * @param {"n2-highmem-8"} instanceType Type of GCP Compute instance
  * @param {"us-central1"} region Region of GCP Compute instance
- * @param {"ondemand"} purchaseType Either "ondemand" or "committed-use"
- * @param {"1yr"} purchaseTerm Reserved instance: Purchase term, defaults to "1yr"
+ * @param {"ondemand"} purchaseType Either "ondemand", "committed-use", or "preemptible"
+ * @param {"1yr"} purchaseTerm Committed-use: Purchase term ("1yr" or "3yr"), defaults to "1yr"
+ * @param {"flexi"} cudType Committed-use: CUD type ("flexi" or "resource"), defaults to "flexi"
  * @returns hourly_cost
  * @customfunction
  */
 
-function GCP_COMPUTE_HOURLY(instanceType, region, purchaseType, purchaseTerm) {
+function GCP_COMPUTE_HOURLY(instanceType, region, purchaseType, purchaseTerm, cudType) {
     var cloudProvider = 'gcp';
     var cloudProduct = 'compute';
-    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm });
+    
+    // Set defaults BEFORE creating options object
+    purchaseType = purchaseType || 'ondemand';
+    cudType = cudType || 'flexi';
+    
+    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, cudType });
     return fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, options);
 }
 
 /**
  * Returns an array containing all instance types and prices for a given region. 
- * For reserved purchaseTypes, purchaseTerm and paymentOption are required.
+ * For committed-use, purchaseTerm and cudType are required.
  *
  * @param {"us-central1"} region Region of GCP Compute instance
- * @param {"ondemand"} purchaseType Either "ondemand" or "committed-use"
- * @param {"1yr"} purchaseTerm Reserved instance: Purchase term, defaults to "1yr"
+ * @param {"ondemand"} purchaseType Either "ondemand", "committed-use", or "preemptible"
+ * @param {"1yr"} purchaseTerm Committed-use: Purchase term ("1yr" or "3yr"), defaults to "1yr"
+ * @param {"flexi"} cudType Committed-use: CUD type ("flexi" or "resource"), defaults to "flexi"
  * @returns instance_matrix
  * @customfunction
  */
 
-function GCP_COMPUTE_ALL_BY_REGION(region, purchaseType, purchaseTerm) {
+function GCP_COMPUTE_ALL_BY_REGION(region, purchaseType, purchaseTerm, cudType) {
     var cloudProvider = 'gcp';
     var cloudProduct = 'compute';
-    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm });
+    
+    // Set defaults BEFORE creating options object
+    purchaseType = purchaseType || 'ondemand';
+    cudType = cudType || 'flexi';
+    
+    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, cudType });
     return fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options);
 }
 

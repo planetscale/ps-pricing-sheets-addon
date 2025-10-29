@@ -3,19 +3,51 @@ function fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, opt
   validateInstanceOptions(cloudProvider, cloudProduct, options);
 
   const prod = fetchProducts(cloudProduct, [instanceType], options);
-  if(prod.length > 1) throw 'Search returned more than one product. Please check the instance type and try again.';
-  let price = getHourlyCost(cloudProduct, prod[0],options);
-  if (!price) throw `Price for ${instanceType} returned null. Please check your options and try again.`;
+  
+  if(prod.length === 0) {
+    throw `No data returned for ${instanceType}. Please check:\n` +
+          `1. Instance type is spelled correctly\n` +
+          `2. Instance type exists in region ${options.region}\n` +
+          `3. Your infracost_api_key is valid\n` +
+          `4. Check execution logs for more details`;
+  }
+  
+  if(prod.length > 1) {
+    throw 'Search returned more than one product. Please check the instance type and try again.';
+  }
+  
+  // Log the product structure for debugging
+  // Both AWS and GCP now use unified 'pricing' structure
+  if (!prod[0].pricing || !prod[0].pricing[options.region]) {
+    Logger.log(`DEBUG: Product structure for ${instanceType}:`);
+    Logger.log(JSON.stringify(prod[0], null, 2));
+    throw `Product data exists but pricing is incomplete for ${instanceType} in ${options.region}. Check execution logs for details.`;
+  }
+  
+  let price = getHourlyCost(cloudProduct, prod[0], options);
+  
+  if (!price) {
+    Logger.log(`DEBUG: getHourlyCost returned null for ${instanceType}`);
+    Logger.log(`Options: ${JSON.stringify(options)}`);
+    Logger.log(`Product: ${JSON.stringify(prod[0])}`);
+    
+    throw `Price for ${instanceType} returned null. Please check your options and try again. See execution logs for details.`;
+  }
   
   return price;
 
 }
 
 function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
+  Logger.log(`DEBUG: fetchRegionalInstanceMatrix called with purchaseType="${options.purchaseType}"`);
+  Logger.log(`DEBUG: Options: ${JSON.stringify(options)}`);
+  
   validateInstanceOptions(cloudProvider, cloudProduct, options);
 
   let instanceTypes = [];
   let allProducts = fetchProducts(cloudProduct, instanceTypes, options);
+  
+  Logger.log(`DEBUG: fetchProducts returned ${allProducts.length} products`);
 
   // sort results "logically"
   allProducts = allProducts.sort(function (a,b) { 
@@ -47,8 +79,13 @@ function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
     var prodResult = [];
     
     var prod_price = getHourlyCost(cloudProduct, allProducts[i], options);
+    
+    if (!prod_price) {
+      Logger.log(`DEBUG: Skipping ${allProducts[i].instance_type} - no price for purchaseType=${options.purchaseType}`);
+      continue;
+    }
+    
     var prod_monthly_price = prod_price * cfg.hoursPerMonth;
-    if (!prod_price) continue;
 
     // Instance Type
     prodResult.push(allProducts[i].instance_type);
@@ -89,6 +126,14 @@ function validateInstanceOptions(cloudProvider, cloudProduct, options) {
 
   if (!supp[cloudProvider]) throw `Currently unsupported Cloud Provider: ${cloudProvider}`;
   if (!supp[cloudProvider][cloudProduct]) throw `Currently unsupported Cloud Product "${cloudProduct}" for ${cloudProvider}`;
+  
+  // Treat empty strings as undefined/null
+  if (options.purchaseType === '') options.purchaseType = undefined;
+  if (options.purchaseTerm === '') options.purchaseTerm = undefined;
+  if (options.offeringClass === '') options.offeringClass = undefined;
+  if (options.paymentOption === '') options.paymentOption = undefined;
+  if (options.platform === '') options.platform = undefined;
+  
   if (options.purchaseType && !supp[cloudProvider][cloudProduct].purchaseTypes[options.purchaseType]) throw `Purchase Type "${options.purchaseType}" is not supported for "${cloudProduct}". Supported types: ${JSON.stringify(Object.getOwnPropertyNames(supp[cloudProvider][cloudProduct].purchaseTypes))}`;
   if (options.purchaseTerm && !supp[cloudProvider][cloudProduct].purchaseTypes[options.purchaseType].purchaseTerms) throw `Purchase Term "${options.purchaseTerm}" is not supported for "${options.purchaseType}". Please keep it empty.`;
   if (options.offeringClass && !supp[cloudProvider][cloudProduct].purchaseTypes[options.purchaseType].offeringClasses) throw `Offering Class "${options.purchaseTerm}" is not supported for "${options.purchaseType}". Please keep it empty.`;
@@ -160,14 +205,46 @@ function getMonthlyCostPSDB(product, options) {
 function getHourlyCostEC2(product, options) {
   var { region, purchaseType, purchaseTerm, paymentOption, offeringClass, platform } = options;
 
+  Logger.log(`DEBUG: getHourlyCostEC2 for ${product.instance_type}, purchaseType=${purchaseType}`);
+  
   let result = parseFloat(0);
 
-  if (!product.pricing) return null;
+  if (!product.pricing) {
+    Logger.log(`ERROR: Product ${product.instance_type} has no pricing object`);
+    return null;
+  }
+  
+  if (!product.pricing[region]) {
+    Logger.log(`ERROR: Product ${product.instance_type} pricing missing region ${region}`);
+    Logger.log(`Available regions: ${Object.keys(product.pricing).join(', ')}`);
+    return null;
+  }
+  
+  if (!product.pricing[region][platform]) {
+    Logger.log(`ERROR: Product ${product.instance_type} pricing missing platform ${platform} in region ${region}`);
+    Logger.log(`Available platforms: ${Object.keys(product.pricing[region]).join(', ')}`);
+    return null;
+  }
+  
+  Logger.log(`DEBUG: Pricing structure for ${product.instance_type}: ${JSON.stringify(product.pricing[region][platform])}`);
+  
   switch (purchaseType) {
   case 'ondemand':
-    if (!product.pricing[region][platform].ondemand) return null;
-      result = parseFloat(product.pricing[region][platform].ondemand);
-      break;
+    var ondemandValue = product.pricing[region][platform].ondemand;
+    Logger.log(`DEBUG: ondemand value for ${product.instance_type}: ${ondemandValue} (type: ${typeof ondemandValue})`);
+    
+    if (!ondemandValue && ondemandValue !== 0) {
+      Logger.log(`ERROR: No ondemand pricing found for ${product.instance_type} in ${region} (${platform})`);
+      return null;
+    }
+    
+    if (ondemandValue === 0) {
+      Logger.log(`ERROR: Ondemand price is 0 for ${product.instance_type} in ${region} (${platform}) - this is likely incorrect`);
+      return null;
+    }
+    
+    result = parseFloat(ondemandValue);
+    break;
   case 'reserved':
     if (!product.pricing[region][platform].reserved) return null;
 
@@ -207,31 +284,72 @@ function getHourlyCostEC2(product, options) {
 }
 
 function getHourlyCostCompute(product, options) {
-  var { region, purchaseType, purchaseTerm  } = options;
+  var { region, purchaseType, purchaseTerm, cudType } = options;
+  cudType = cudType || 'flexi';
+  
+  Logger.log(`DEBUG: getHourlyCostCompute for ${product.instance_type}, purchaseType=${purchaseType}`);
 
   let result = parseFloat(0);
-  //Logger.log(`getHourlyCostCompute: ${JSON.stringify(product)}`);
+  
+  // GCP now uses same structure as AWS: pricing[region]["linux"]
+  var platform = "linux"; // GCP instances are Linux
+  
+  if (!product.pricing) {
+    Logger.log(`ERROR: Product ${product.instance_type} has no pricing object`);
+    return null;
+  }
+  
+  if (!product.pricing[region]) {
+    Logger.log(`ERROR: Product ${product.instance_type} pricing missing region ${region}`);
+    Logger.log(`Available regions: ${Object.keys(product.pricing).join(', ')}`);
+    return null;
+  }
+  
+  if (!product.pricing[region][platform]) {
+    Logger.log(`ERROR: Product ${product.instance_type} pricing missing platform ${platform}`);
+    Logger.log(`Available platforms: ${Object.keys(product.pricing[region]).join(', ')}`);
+    return null;
+  }
+  
+  Logger.log(`DEBUG: Pricing structure for ${product.instance_type}: ${JSON.stringify(product.pricing[region][platform])}`);
 
   switch (purchaseType) {
   case 'ondemand':
-    //Logger.log(JSON.stringify(product));
-    if (!product.regions[region].ondemand) return null;
-    result = parseFloat(product.regions[region].ondemand);
+    var ondemandValue = product.pricing[region][platform].ondemand;
+    if (!ondemandValue && ondemandValue !== 0) return null;
+    if (ondemandValue === 0) return null;
+    result = parseFloat(ondemandValue);
     break;
+    
   case 'committed-use':
-    let k = ''
-    switch (purchaseTerm) {
-    case '3yr':
-      k = 'cud-3y';
-      break;
-    default:
-      k = 'cud-1y';
+  case 'committed':
+    // GCP CUD pricing: applied discount to on-demand in fetchGCPComputeGraphQL
+    if (!product.pricing[region][platform].reserved) return null;
+    
+    // Build key based on term and cudType
+    var key = '';
+    if (cudType === 'resource') {
+      key = purchaseTerm === '3yr' ? 'cud-resource-3y' : 'cud-resource-1y';
+    } else {
+      key = purchaseTerm === '3yr' ? 'cud-flexi-3y' : 'cud-flexi-1y';
     }
-    if (!product.regions[region][k]) return null;
-    result = parseFloat(product.regions[region][k]);
+    
+    if (!product.pricing[region][platform].reserved[key]) {
+      Logger.log(`ERROR: No ${cudType} CUD pricing found for ${purchaseTerm}`);
+      return null;
+    }
+    result = parseFloat(product.pricing[region][platform].reserved[key]);
     break;
-    }
-    return result;
+    
+  case 'preemptible':
+    var preemptibleValue = product.pricing[region][platform].preemptible;
+    if (!preemptibleValue && preemptibleValue !== 0) return null;
+    if (preemptibleValue === 0) return null;
+    result = parseFloat(preemptibleValue);
+    break;
+  }
+  
+  return result;
 }
 
 function getMonthlyCost(cloudProduct, product, options) {

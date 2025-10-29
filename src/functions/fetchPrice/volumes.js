@@ -3,25 +3,38 @@ function fetchSingleVolumePrice(cloudProvider, cloudProduct, options) {
   if(!parseFloat(options.volumeSize)) throw 'Unable to parse volume units';
   validateVolumeOptions(cloudProvider, cloudProduct, options);
 
-  let allRegions = [];
+  Logger.log(`DEBUG: fetchSingleVolumePrice for ${cloudProduct}`);
+  Logger.log(`DEBUG: Region: ${options.region}, VolumeType: ${options.volumeType}, StorageType: ${options.storageType}`);
 
   let prod;
   switch (cloudProduct){
   case 'ebs':
     try{
-      prod = fetchProducts(cloudProduct, [options.region]);
-      if(prod.length > 1) throw 'Search returned more than one region. Please check the region and try again.';
+      // Call GraphQL directly for this specific volume type and region
+      Logger.log(`Fetching EBS pricing from GraphQL: ${options.volumeType} in ${options.region}`);
+      prod = [fetchAWSEBSGraphQL(options.region, options.volumeType)];
+      
+      if(!prod[0] || !prod[0].ebs_prices) {
+        throw 'No EBS pricing data returned from API.';
+      }
+      
+      Logger.log(`✅ EBS pricing fetched successfully`);
     }catch(err){
-      throw `Failed to query FireStore. ${err}`;
+      throw `Failed to fetch EBS pricing. ${err}`;
     }
   break;
   case 'gcs':
-    // Need to API this eventually
-    prod = [{ 
-      localssd: {
-        fixedPricePerTBMonth: 81.920,
-      }
-    }];
+    try{
+      prod = [fetchGCPLocalSSDGraphQL(options.region)];
+    }catch(err){
+      Logger.log(`Failed to fetch GCS pricing via API, using fallback: ${err}`);
+      // Fallback to hardcoded price
+      prod = [{ 
+        localssd: {
+          fixedPricePerTBMonth: 81.920,
+        }
+      }];
+    }
   break;
   }
 

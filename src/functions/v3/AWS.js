@@ -38,6 +38,11 @@ function CLOUD_ALL_BY_REGION(cloudProvider="aws", cloudProduct="ec2", region, pu
 function AWS_EC2_ALL_BY_REGION(region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform) {
     var cloudProvider = 'aws';
     var cloudProduct = 'ec2';
+    
+    // Set defaults BEFORE creating options object
+    platform = platform || 'linux';
+    purchaseType = purchaseType || 'ondemand';
+    
     options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
     return fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options);
 }
@@ -60,6 +65,11 @@ function AWS_EC2_ALL_BY_REGION(region, purchaseType, purchaseTerm, offeringClass
 function AWS_EC2_HOURLY(instanceType, region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform) {
     var cloudProvider = 'aws';
     var cloudProduct = 'ec2';
+    
+    // Set defaults BEFORE creating options object
+    platform = platform || 'linux';
+    purchaseType = purchaseType || 'ondemand';
+    
     options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
     return fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, options);
 }
