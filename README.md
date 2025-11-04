@@ -15,8 +15,6 @@ It offers functions that integrate both AWS and GCP pricing, as well as the abil
 - ✅ All existing functions work exactly the same
 - ✅ **95% fewer API calls** for bulk queries (batched GraphQL)
 
-**See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for setup instructions.**
-
 ## Data Sources
 
 - **AWS & GCP Pricing**: [Infracost Cloud Pricing API](https://www.infracost.io/docs/cloud_pricing_api/) (GraphQL)
@@ -75,7 +73,3 @@ Formatters & Price Calculators
     ↓
 Return to Sheet
 ```
-
-## Development
-
-See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for detailed architecture and troubleshooting.
