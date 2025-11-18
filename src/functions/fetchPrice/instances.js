@@ -75,6 +75,11 @@ function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
     'Monthly Cost'
   ]);
 
+  // if PSDB, add a column for the parent provider instance type
+  if (cloudProduct === 'psdb') {
+    results[0].push('Parent Provider Instance Type');
+  }
+
   for (var i = allProducts.length - 1; i >= 0; i--) {
     var prodResult = [];
     

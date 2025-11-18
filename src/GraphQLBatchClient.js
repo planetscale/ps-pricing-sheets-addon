@@ -247,7 +247,8 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
   // Build aliases for each machine type to batch them in one query
   var aliases = instanceTypes.map(function(type, i) {
     var safeAlias = 'inst_' + type.replace(/-/g, '_');
-    
+    var machineTypeFilter = '{ key: "machineType", value: "' + type + '" }';
+
     // Build price filter based on purchase type
     // For committed-use: fetch on-demand and apply discount in code
     var priceFilterParts = [];
@@ -272,7 +273,7 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
           productFamily: "Compute Instance"
           region: "${region}"
           attributeFilters: [
-            { key: "machineType", value: "${type}" }
+            ${machineTypeFilter}
           ]
         }
       ) {
@@ -291,6 +292,7 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
   try {
     var json = cachedGraphQL(query);
     var results = [];
+    var missingTypes = [];
     
     // Parse results from batched response (same logic as AWS)
     instanceTypes.forEach(function(type, i) {
@@ -321,6 +323,7 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
         
         if (!product) {
           Logger.log(`Batched GCP: No valid ${purchaseType} pricing found for ${type}`);
+          missingTypes.push(type);
           return;
         }
         
@@ -332,7 +335,8 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
         });
 
         // Parse vCPU and memory from machine type name
-        var specs = parseGCPMachineType(type, attributes);
+        var resolvedType = attributes.machineType || attributes.machine_type || type;
+        var specs = parseGCPMachineType(resolvedType, attributes);
 
         // Build pricing structure - NOW SAME AS AWS
         var pricingObj = {};
@@ -366,6 +370,7 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
         // Use AWS-style pricing structure
         var instanceObj = {
           instance_type: type,
+          resolved_machine_type: resolvedType,
           vCPU: specs.cores,
           memory: specs.memory,
           pricing: {
@@ -378,8 +383,15 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
         results.push(instanceObj);
       } else {
         Logger.log(`No data found for ${type} in batched response`);
+        missingTypes.push(type);
       }
     });
+    
+    if (missingTypes.length > 0) {
+      Logger.log(`Batched GCP: Falling back to individual lookups for ${missingTypes.length} machine type(s)`);
+      var fallbackResults = fetchGCPComputeGraphQL(missingTypes, region, purchaseType, purchaseTerm, cudType);
+      results = results.concat(fallbackResults);
+    }
     
     return results;
     

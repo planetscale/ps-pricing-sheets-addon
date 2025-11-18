@@ -85,7 +85,7 @@ function formatPSDB(allProducts) {
 
     for (var i = 0; i < allProducts.length; i++) {
         allProducts[i].instance_type = allProducts[i].name;
-        allProducts[i].region = options.region;
+        allProducts[i].region = allProducts[i].options ? allProducts[i].options.region : null;
         allProducts[i].ps_instance_class = allProducts[i].metal ? 'metal' : '';
         if (allProducts[i].ps_instance_class == ''){
             let tss = allProducts[i].tshirt_size.split('.');
@@ -118,14 +118,14 @@ function fetchGCPCompute(filterTypes, options) {
     
     var responses = [];
     
-    // Strategy: Same as AWS - chunk large sets into batches of 10
+    // Strategy: Same as AWS - chunk large sets into manageable batches (max 5)
     if (filterTypes.length <= 3) {
         // Small set - use individual queries
         Logger.log(`Using individual GraphQL queries for ${filterTypes.length} GCP instances (${purchaseType})`);
         responses = fetchGCPComputeGraphQL(filterTypes, region, purchaseType, purchaseTerm, cudType);
     } else {
         // Large set - split into chunks of 10 and batch each chunk
-        var chunkSize = 10;
+        var chunkSize = 5;
         var totalChunks = Math.ceil(filterTypes.length / chunkSize);
         
         Logger.log(`Using chunked batched GraphQL for ${filterTypes.length} GCP instances (${purchaseType})`);

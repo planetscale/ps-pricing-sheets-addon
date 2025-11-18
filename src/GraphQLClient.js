@@ -112,6 +112,40 @@ function translatePaymentOptionToAPI(paymentOption) {
 }
 
 /**
+ * Build list of potential GCP machine type names for lookup, including variants
+ * that append storage suffixes (e.g., -highlssd).
+ * @param {string} machineType
+ * @return {Array<string>}
+ */
+function getGCPMachineTypeCandidates(machineType) {
+  var candidates = [machineType];
+
+  if (machineType.indexOf('lssd') === -1 && machineType.indexOf('z3-') === 0) {
+    candidates.push(machineType + '-highlssd');
+    candidates.push(machineType + '-standardlssd');
+    candidates.push(machineType + '-lssd');
+  }
+
+  // Deduplicate while preserving order
+  var unique = [];
+  var seen = {};
+  for (var i = 0; i < candidates.length; i++) {
+    var candidate = candidates[i];
+    if (!seen[candidate]) {
+      unique.push(candidate);
+      seen[candidate] = true;
+    }
+  }
+
+  return unique;
+}
+
+/**
+ * Escape a string for safe use inside a regular expression
+ * @param {string} value
+ * @return {string}
+ */
+/**
  * Get the correct operation and usagetype filters based on purchase type
  * @param {string} purchaseType - ondemand or reserved
  * @param {string} instanceType - e.g., m5.xlarge
@@ -594,25 +628,31 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
   
   for (var i = 0; i < instanceTypes.length; i++) {
     var machineType = instanceTypes[i];
+    var candidates = getGCPMachineTypeCandidates(machineType);
+    var matchedProduct = null;
+    var matchedAttributes = {};
+    var matchedTypeName = null;
+    var priceValue = null;
     
-    // Build price filter based on purchase type
-    // For committed-use: fetch on-demand and apply discount in code
-    var priceFilterParts = [];
-    var fetchType = purchaseType;
-    
-    if (purchaseType === 'committed-use' || purchaseType === 'committed') {
-      Logger.log(`Fetching on-demand pricing for ${machineType}, will apply ${cudType} CUD discount`);
-      fetchType = 'ondemand';
-      priceFilterParts.push('purchaseOption: "on_demand"');
-    } else if (purchaseType === 'preemptible') {
-      priceFilterParts.push('purchaseOption: "preemptible"');
-    } else {
-      // ondemand
-      priceFilterParts.push('purchaseOption: "on_demand"');
-    }
-    
-    var priceFilter = priceFilterParts.length > 0 ? 
-      'filter: { ' + priceFilterParts.join(', ') + ' }' : '';
+    for (var c = 0; c < candidates.length; c++) {
+      var candidateType = candidates[c];
+      
+      // Build price filter based on purchase type
+      // For committed-use: fetch on-demand and apply discount in code
+      var priceFilterParts = [];
+      
+      if (purchaseType === 'committed-use' || purchaseType === 'committed') {
+        Logger.log(`Fetching on-demand pricing for ${candidateType}, will apply ${cudType} CUD discount`);
+        priceFilterParts.push('purchaseOption: "on_demand"');
+      } else if (purchaseType === 'preemptible') {
+        priceFilterParts.push('purchaseOption: "preemptible"');
+      } else {
+        // ondemand
+        priceFilterParts.push('purchaseOption: "on_demand"');
+      }
+      
+      var priceFilter = priceFilterParts.length > 0 ? 
+        'filter: { ' + priceFilterParts.join(', ') + ' }' : '';
     
     var query = `{
       products(
@@ -622,12 +662,12 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
           productFamily: "Compute Instance"
           region: "${region}"
           attributeFilters: [
-            { key: "machineType", value: "${machineType}" }
+              { key: "machineType", value: "${candidateType}" }
           ]
         }
       ) {
         attributes { key value }
-        prices(${priceFilter}) {
+          prices(${priceFilter}) {
           USD
         }
       }
@@ -637,89 +677,89 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
       var json = cachedGraphQL(query);
       
       if (json.data.products && json.data.products.length > 0) {
-        Logger.log(`INFO: Found ${json.data.products.length} GCP products for ${machineType}`);
-        
-        // Find product with valid pricing (same logic as AWS)
-        var product = null;
-        var priceValue = null;
-        
-        for (var j = 0; j < json.data.products.length; j++) {
-          var candidate = json.data.products[j];
+          Logger.log(`INFO: Found ${json.data.products.length} GCP products for ${candidateType}`);
           
-          if (candidate.prices && candidate.prices.length > 0) {
-            var candidatePrice = parseFloat(candidate.prices[0].USD);
+          for (var j = 0; j < json.data.products.length; j++) {
+            var candidateProduct = json.data.products[j];
             
-            if (candidatePrice && candidatePrice > 0) {
-              Logger.log(`INFO: GCP Product [${j}] has valid ${purchaseType} price: $${candidatePrice}`);
-              product = candidate;
-              priceValue = candidatePrice;
-              break;
+            if (candidateProduct.prices && candidateProduct.prices.length > 0) {
+              var candidatePrice = parseFloat(candidateProduct.prices[0].USD);
+              
+              if (candidatePrice && candidatePrice > 0) {
+                Logger.log(`INFO: GCP Product [${j}] has valid ${purchaseType} price: $${candidatePrice}`);
+                matchedProduct = candidateProduct;
+                priceValue = candidatePrice;
+                matchedTypeName = candidateType;
+                break;
+              }
             }
           }
-        }
-        
-        if (!product) {
-          Logger.log(`ERROR: No valid ${purchaseType} pricing found for ${machineType}`);
-          continue;
-        }
-        
-        var attributes = {};
-        
-        // Convert attributes array to object
-        product.attributes.forEach(function(attr) {
-          attributes[attr.key] = attr.value;
-        });
-
-        // Parse vCPU and memory from machine type name (GCP doesn't return these in attributes)
-        var specs = parseGCPMachineType(machineType, attributes);
-
-        // Build pricing structure - NOW USING SAME FORMAT AS AWS
-        var pricingObj = {};
-        
-        if (purchaseType === 'committed-use' || purchaseType === 'committed') {
-          // Apply CUD discount to on-demand price
-          var discount = getGCPCUDDiscount(purchaseTerm, cudType);
-          var cudPrice = priceValue * (1 - discount);
           
-          Logger.log(`Applying ${cudType} CUD discount: ${(discount * 100).toFixed(0)}% off $${priceValue} = $${cudPrice.toFixed(6)}`);
-          
-          pricingObj.ondemand = priceValue;
-          pricingObj.reserved = {};
-          
-          // Store CUD price like AWS reserved
-          var key = purchaseTerm === '3yr' ? 'cud-3y' : 'cud-1y';
-          if (cudType === 'resource') {
-            key = purchaseTerm === '3yr' ? 'cud-resource-3y' : 'cud-resource-1y';
-          } else {
-            key = purchaseTerm === '3yr' ? 'cud-flexi-3y' : 'cud-flexi-1y';
+          if (matchedProduct) {
+            matchedProduct.attributes.forEach(function(attr) {
+              matchedAttributes[attr.key] = attr.value;
+            });
+            break;
           }
-          pricingObj.reserved[key] = cudPrice;
-          
-        } else if (purchaseType === 'preemptible') {
-          pricingObj.preemptible = priceValue;
-        } else {
-          // ondemand
-          pricingObj.ondemand = priceValue;
         }
+        
+        Logger.log(`INFO: No valid pricing found for candidate ${candidateType}, trying next option if available...`);
+      } catch (err) {
+        Logger.log(`Error fetching ${candidateType}: ${err}`);
+      }
+    }
+    
+    if (!matchedProduct) {
+      Logger.log(`ERROR: Unable to find ${purchaseType} pricing for ${machineType} in ${region}`);
+      continue;
+    }
+    
+    // Parse vCPU and memory from machine type name (GCP doesn't return these in attributes)
+    var specs = parseGCPMachineType(matchedTypeName || machineType, matchedAttributes);
 
-        // Use AWS-style pricing structure
+    // Build pricing structure - NOW USING SAME FORMAT AS AWS
+    var pricingObj = {};
+    
+    if (purchaseType === 'committed-use' || purchaseType === 'committed') {
+      // Apply CUD discount to on-demand price
+      var discount = getGCPCUDDiscount(purchaseTerm, cudType);
+      var cudPrice = priceValue * (1 - discount);
+      
+      Logger.log(`Applying ${cudType} CUD discount: ${(discount * 100).toFixed(0)}% off $${priceValue} = $${cudPrice.toFixed(6)}`);
+      
+      pricingObj.ondemand = priceValue;
+      pricingObj.reserved = {};
+      
+      // Store CUD price like AWS reserved
+      var key = purchaseTerm === '3yr' ? 'cud-3y' : 'cud-1y';
+      if (cudType === 'resource') {
+        key = purchaseTerm === '3yr' ? 'cud-resource-3y' : 'cud-resource-1y';
+      } else {
+        key = purchaseTerm === '3yr' ? 'cud-flexi-3y' : 'cud-flexi-1y';
+      }
+      pricingObj.reserved[key] = cudPrice;
+      
+    } else if (purchaseType === 'preemptible') {
+      pricingObj.preemptible = priceValue;
+    } else {
+      // ondemand
+      pricingObj.ondemand = priceValue;
+    }
+
+    // Use AWS-style pricing structure
         var instanceObj = {
           instance_type: machineType,
-          vCPU: specs.cores,
-          memory: specs.memory,
-          pricing: {
+      resolved_machine_type: matchedTypeName || machineType,
+      vCPU: specs.cores,
+      memory: specs.memory,
+      pricing: {
             [region]: {
-              "linux": pricingObj  // GCP instances are Linux
+          "linux": pricingObj  // GCP instances are Linux
             }
           }
         };
 
         results.push(instanceObj);
-      }
-    } catch (err) {
-      Logger.log(`Error fetching ${machineType}: ${err}`);
-      // Continue with other instances
-    }
   }
 
   return results;
@@ -738,8 +778,16 @@ function parseGCPMachineType(machineType, attributes) {
   if (cores === 0) {
     var parts = machineType.split('-');
     if (parts.length >= 3) {
-      var size = parseInt(parts[parts.length - 1]);
-      if (!isNaN(size)) {
+      var size = 0;
+      for (var idx = parts.length - 1; idx >= 0; idx--) {
+        var parsedSize = parseInt(parts[idx], 10);
+        if (!isNaN(parsedSize)) {
+          size = parsedSize;
+          break;
+        }
+      }
+
+      if (size > 0) {
         cores = size;
         
         // Estimate memory based on type
