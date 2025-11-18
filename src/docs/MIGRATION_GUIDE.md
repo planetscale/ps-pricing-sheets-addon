@@ -42,7 +42,7 @@ In your Google Apps Script project:
 2. Scroll to **Script Properties**
 3. Add a new property:
    - **Property**: `infracost_api_key`
-   - **Value**: Your Infracost API key (e.g., `ico-z5lYkOCvqmvgGbZEhn8p76sZ653qNHWF`)
+   - **Value**: Your Infracost API key (e.g., `ico-xxxxxxxxxxxxx`)
 
 ### 3. Existing Script Properties (Keep These)
 
