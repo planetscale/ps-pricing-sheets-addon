@@ -323,6 +323,360 @@ function testBatchPerformance() {
 }
 
 /**
+ * Test AWS RDS Aurora MySQL on-demand pricing (Standard - default)
+ */
+function testAWSRDSAuroraMySQLOnDemand() {
+  try {
+    Logger.log('Testing AWS RDS Aurora MySQL on-demand pricing (Standard)...');
+    var result = AWS_RDS_HOURLY('aurora/mysql', 'db.r6g.large', 'us-east-1', 'ondemand');
+    Logger.log('Result: $' + result + '/hour');
+    
+    // Aurora Standard db.r6g.large should be around $0.26/hr in us-east-1
+    if (result && result > 0 && result < 0.30) {
+      Logger.log('✅ AWS_RDS_HOURLY (Aurora MySQL Standard on-demand) test PASSED');
+      return true;
+    } else if (result && result >= 0.30) {
+      Logger.log('❌ AWS_RDS_HOURLY test FAILED - price $' + result + ' seems too high (expected ~$0.26 for Standard)');
+      return false;
+    } else {
+      Logger.log('❌ AWS_RDS_HOURLY (Aurora MySQL on-demand) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_HOURLY (Aurora MySQL on-demand) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS Aurora MySQL I/O-Optimized on-demand pricing
+ */
+function testAWSRDSAuroraMySQLIOOptimized() {
+  try {
+    Logger.log('Testing AWS RDS Aurora MySQL I/O-Optimized on-demand pricing...');
+    var result = AWS_RDS_HOURLY('aurora/mysql', 'db.r6g.large', 'us-east-1', 'ondemand', '', '', true);
+    Logger.log('Result: $' + result + '/hour');
+    
+    // Aurora I/O-Optimized db.r6g.large should be around $0.338/hr in us-east-1
+    if (result && result > 0.30) {
+      Logger.log('✅ AWS_RDS_HOURLY (Aurora MySQL I/O-Optimized) test PASSED');
+      return true;
+    } else if (result && result <= 0.30) {
+      Logger.log('❌ AWS_RDS_HOURLY test FAILED - price $' + result + ' seems too low (expected ~$0.338 for I/O-Optimized)');
+      return false;
+    } else {
+      Logger.log('❌ AWS_RDS_HOURLY (Aurora MySQL I/O-Optimized) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_HOURLY (Aurora MySQL I/O-Optimized) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS Aurora MySQL reserved pricing
+ */
+function testAWSRDSAuroraMySQLReserved() {
+  try {
+    Logger.log('Testing AWS RDS Aurora MySQL reserved pricing...');
+    var result = AWS_RDS_HOURLY('aurora/mysql', 'db.r6g.large', 'us-east-1', 'reserved', '1yr', 'no_upfront');
+    Logger.log('Result: $' + result + '/hour');
+    
+    if (result && result > 0) {
+      Logger.log('✅ AWS_RDS_HOURLY (Aurora MySQL reserved) test PASSED');
+      return true;
+    } else {
+      Logger.log('❌ AWS_RDS_HOURLY (Aurora MySQL reserved) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_HOURLY (Aurora MySQL reserved) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS Aurora PostgreSQL on-demand pricing
+ */
+function testAWSRDSAuroraPostgreSQLOnDemand() {
+  try {
+    Logger.log('Testing AWS RDS Aurora PostgreSQL on-demand pricing...');
+    var result = AWS_RDS_HOURLY('aurora/postgresql', 'db.r6g.large', 'us-east-1', 'ondemand');
+    Logger.log('Result: $' + result + '/hour');
+    
+    if (result && result > 0) {
+      Logger.log('✅ AWS_RDS_HOURLY (Aurora PostgreSQL on-demand) test PASSED');
+      return true;
+    } else {
+      Logger.log('❌ AWS_RDS_HOURLY (Aurora PostgreSQL on-demand) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_HOURLY (Aurora PostgreSQL on-demand) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS MySQL on-demand pricing
+ */
+function testAWSRDSMySQLOnDemand() {
+  try {
+    Logger.log('Testing AWS RDS MySQL on-demand pricing...');
+    var result = AWS_RDS_HOURLY('mysql', 'db.r6g.large', 'us-east-1', 'ondemand');
+    Logger.log('Result: $' + result + '/hour');
+    
+    if (result && result > 0) {
+      Logger.log('✅ AWS_RDS_HOURLY (MySQL on-demand) test PASSED');
+      return true;
+    } else {
+      Logger.log('❌ AWS_RDS_HOURLY (MySQL on-demand) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_HOURLY (MySQL on-demand) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS Aurora storage pricing
+ */
+function testAWSRDSAuroraStorage() {
+  try {
+    Logger.log('Testing AWS RDS Aurora storage pricing...');
+    var result = AWS_RDS_STORAGE_HOURLY('aurora', 100, 'us-east-1', 'aurora/mysql');
+    Logger.log('Result: $' + result + '/hour for 100GB Aurora storage');
+    
+    if (result && result > 0) {
+      Logger.log('✅ AWS_RDS_STORAGE_HOURLY (Aurora) test PASSED');
+      return true;
+    } else {
+      Logger.log('❌ AWS_RDS_STORAGE_HOURLY (Aurora) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_STORAGE_HOURLY (Aurora) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS Aurora I/O pricing
+ */
+function testAWSRDSAuroraIO() {
+  try {
+    Logger.log('Testing AWS RDS Aurora I/O pricing...');
+    var result = AWS_RDS_IO_HOURLY(1000000, 'us-east-1', 'aurora/mysql');
+    Logger.log('Result: $' + result + '/hour for 1M I/O requests');
+    
+    if (result && result >= 0) { // Can be 0 for some regions
+      Logger.log('✅ AWS_RDS_IO_HOURLY test PASSED');
+      return true;
+    } else {
+      Logger.log('❌ AWS_RDS_IO_HOURLY test FAILED - invalid price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_IO_HOURLY test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS MySQL with gp3 storage pricing
+ */
+function testAWSRDSMySQLStorageGP3() {
+  try {
+    Logger.log('Testing AWS RDS MySQL gp3 storage pricing...');
+    var result = AWS_RDS_STORAGE_HOURLY('gp3', 500, 'us-east-1', 'mysql');
+    Logger.log('Result: $' + result + '/hour for 500GB gp3 storage');
+    
+    if (result && result > 0) {
+      Logger.log('✅ AWS_RDS_STORAGE_HOURLY (MySQL gp3) test PASSED');
+      return true;
+    } else {
+      Logger.log('❌ AWS_RDS_STORAGE_HOURLY (MySQL gp3) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_STORAGE_HOURLY (MySQL gp3) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test AWS RDS PostgreSQL with io2 storage pricing
+ */
+function testAWSRDSPostgreSQLStorageIO2() {
+  try {
+    Logger.log('Testing AWS RDS PostgreSQL io2 storage pricing...');
+    var result = AWS_RDS_STORAGE_HOURLY('io2', 1000, 'us-west-2', 'postgresql');
+    Logger.log('Result: $' + result + '/hour for 1000GB io2 storage');
+    
+    if (result && result > 0) {
+      Logger.log('✅ AWS_RDS_STORAGE_HOURLY (PostgreSQL io2) test PASSED');
+      return true;
+    } else {
+      Logger.log('❌ AWS_RDS_STORAGE_HOURLY (PostgreSQL io2) test FAILED - no price returned');
+      return false;
+    }
+  } catch (err) {
+    Logger.log('❌ AWS_RDS_STORAGE_HOURLY (PostgreSQL io2) test FAILED: ' + err);
+    return false;
+  }
+}
+
+/**
+ * Run RDS-specific tests
+ */
+function runRDSTests() {
+  Logger.log('=================================');
+  Logger.log('Starting AWS RDS Pricing Tests');
+  Logger.log('=================================\n');
+  
+  // Run preflight check first
+  if (!preflightCheck()) {
+    Logger.log('\n⚠️  Pre-flight checks failed. Please fix the issues above before running tests.');
+    return;
+  }
+  
+  var tests = [
+    { name: 'AWS RDS Aurora MySQL Standard On-Demand', func: testAWSRDSAuroraMySQLOnDemand },
+    { name: 'AWS RDS Aurora MySQL I/O-Optimized', func: testAWSRDSAuroraMySQLIOOptimized },
+    { name: 'AWS RDS Aurora MySQL Reserved', func: testAWSRDSAuroraMySQLReserved },
+    { name: 'AWS RDS Aurora PostgreSQL On-Demand', func: testAWSRDSAuroraPostgreSQLOnDemand },
+    { name: 'AWS RDS MySQL On-Demand', func: testAWSRDSMySQLOnDemand },
+    { name: 'AWS RDS Aurora Storage', func: testAWSRDSAuroraStorage },
+    { name: 'AWS RDS Aurora I/O', func: testAWSRDSAuroraIO },
+    { name: 'AWS RDS MySQL gp3 Storage', func: testAWSRDSMySQLStorageGP3 },
+    { name: 'AWS RDS PostgreSQL io2 Storage', func: testAWSRDSPostgreSQLStorageIO2 }
+  ];
+  
+  var passed = 0;
+  var failed = 0;
+  
+  tests.forEach(function(test) {
+    Logger.log('\n--- Running: ' + test.name + ' ---');
+    if (test.func()) {
+      passed++;
+    } else {
+      failed++;
+    }
+  });
+  
+  Logger.log('\n=================================');
+  Logger.log('RDS Test Results');
+  Logger.log('=================================');
+  Logger.log('✅ Passed: ' + passed);
+  Logger.log('❌ Failed: ' + failed);
+  Logger.log('Total: ' + tests.length);
+  Logger.log('=================================\n');
+  
+  if (failed === 0) {
+    Logger.log('🎉 All RDS tests passed!');
+  } else {
+    Logger.log('⚠️ Some RDS tests failed. Please review the errors above.');
+  }
+}
+
+/**
+ * Test parseTshirtSize utility function (no API calls needed)
+ */
+function testParseTshirtSize() {
+  try {
+    Logger.log('Testing parseTshirtSize...');
+    var allPassed = true;
+
+    // Non-metal Vitess
+    var r1 = parseTshirtSize('vt.m1.large');
+    if (r1.productType !== 'vitess' || r1.provider !== null || r1.cloudInstanceType !== null) {
+      Logger.log('FAIL: vt.m1.large -> ' + JSON.stringify(r1));
+      allPassed = false;
+    }
+
+    // Metal AWS Vitess
+    var r2 = parseTshirtSize('vt.aws.i4i.large');
+    if (r2.productType !== 'vitess' || r2.provider !== 'aws' || r2.cloudInstanceType !== 'i4i.large') {
+      Logger.log('FAIL: vt.aws.i4i.large -> ' + JSON.stringify(r2));
+      allPassed = false;
+    }
+
+    // Metal GCP Vitess (with localssd suffix)
+    var r3 = parseTshirtSize('vt.gcp.n2d-highmem-2-localssd-1');
+    if (r3.productType !== 'vitess' || r3.provider !== 'gcp' || r3.cloudInstanceType !== 'n2d-highmem-2') {
+      Logger.log('FAIL: vt.gcp.n2d-highmem-2-localssd-1 -> ' + JSON.stringify(r3));
+      allPassed = false;
+    }
+
+    // Future Postgres
+    var r4 = parseTshirtSize('pg.m1.large');
+    if (r4.productType !== 'postgres') {
+      Logger.log('FAIL: pg.m1.large -> ' + JSON.stringify(r4));
+      allPassed = false;
+    }
+
+    // Null input
+    var r5 = parseTshirtSize(null);
+    if (r5.productType !== 'vitess') {
+      Logger.log('FAIL: null -> ' + JSON.stringify(r5));
+      allPassed = false;
+    }
+
+    // Metal AWS with dot-separated size (r6id.xlarge)
+    var r6 = parseTshirtSize('vt.aws.r6id.xlarge');
+    if (r6.cloudInstanceType !== 'r6id.xlarge') {
+      Logger.log('FAIL: vt.aws.r6id.xlarge -> ' + JSON.stringify(r6));
+      allPassed = false;
+    }
+
+    if (allPassed) {
+      Logger.log('PASSED: parseTshirtSize');
+    }
+    return allPassed;
+  } catch (err) {
+    Logger.log('FAILED: parseTshirtSize - ' + err);
+    return false;
+  }
+}
+
+/**
+ * Test isGravitonFamily utility function (no API calls needed)
+ */
+function testIsGravitonFamily() {
+  try {
+    Logger.log('Testing isGravitonFamily...');
+    var allPassed = true;
+
+    var gravitonFamilies = ['r6g', 'm7g', 'c6g', 'r6gd', 'm6gd', 'c7g', 'r8g'];
+    var x86Families = ['r6i', 'r6id', 'm5', 'm5d', 'c5', 'c6i', 'i3', 'i3en', 'i4i', 'm6i', 'm6id'];
+
+    gravitonFamilies.forEach(function(f) {
+      if (!isGravitonFamily(f)) {
+        Logger.log('FAIL: ' + f + ' should be Graviton');
+        allPassed = false;
+      }
+    });
+
+    x86Families.forEach(function(f) {
+      if (isGravitonFamily(f)) {
+        Logger.log('FAIL: ' + f + ' should NOT be Graviton');
+        allPassed = false;
+      }
+    });
+
+    if (allPassed) {
+      Logger.log('PASSED: isGravitonFamily');
+    }
+    return allPassed;
+  } catch (err) {
+    Logger.log('FAILED: isGravitonFamily - ' + err);
+    return false;
+  }
+}
+
+/**
  * Run all tests
  */
 function runAllTests() {
@@ -340,9 +694,20 @@ function runAllTests() {
     { name: 'AWS EC2 On-Demand', func: testAWSEC2OnDemand },
     { name: 'AWS EC2 Reserved', func: testAWSEC2Reserved },
     { name: 'AWS EBS', func: testAWSEBS },
+    { name: 'AWS RDS Aurora MySQL Standard On-Demand', func: testAWSRDSAuroraMySQLOnDemand },
+    { name: 'AWS RDS Aurora MySQL I/O-Optimized', func: testAWSRDSAuroraMySQLIOOptimized },
+    { name: 'AWS RDS Aurora MySQL Reserved', func: testAWSRDSAuroraMySQLReserved },
+    { name: 'AWS RDS Aurora PostgreSQL On-Demand', func: testAWSRDSAuroraPostgreSQLOnDemand },
+    { name: 'AWS RDS MySQL On-Demand', func: testAWSRDSMySQLOnDemand },
+    { name: 'AWS RDS Aurora Storage', func: testAWSRDSAuroraStorage },
+    { name: 'AWS RDS Aurora I/O', func: testAWSRDSAuroraIO },
+    { name: 'AWS RDS MySQL gp3 Storage', func: testAWSRDSMySQLStorageGP3 },
+    { name: 'AWS RDS PostgreSQL io2 Storage', func: testAWSRDSPostgreSQLStorageIO2 },
     { name: 'GCP Compute On-Demand', func: testGCPComputeOnDemand },
     { name: 'GCP Compute Committed', func: testGCPComputeCommitted },
     { name: 'GCP Local SSD', func: testGCPLocalSSD },
+    { name: 'Parse Tshirt Size', func: testParseTshirtSize },
+    { name: 'Graviton Family Detection', func: testIsGravitonFamily },
     { name: 'PSDB Instance', func: testPSDBInstance },
     { name: 'PSDB Regions', func: testPSDBRegions },
     { name: 'AWS EC2 Matrix', func: testAWSEC2Matrix },

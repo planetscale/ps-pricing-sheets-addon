@@ -26,11 +26,8 @@ function cachedGraphQL(query, ttl) {
   var cached = cache.get(cacheKey);
 
   if (cached) {
-    Logger.log("GraphQL: Returning cached response");
     return JSON.parse(cached);
   }
-
-  Logger.log("GraphQL: Cache miss, fetching from API");
   
   // Get API key from script properties
   var apiKey = PropertiesService.getScriptProperties().getProperty('infracost_api_key');
@@ -49,43 +46,18 @@ function cachedGraphQL(query, ttl) {
 
   var response = UrlFetchApp.fetch("https://pricing.api.infracost.io/graphql", options);
   var responseText = response.getContentText();
-  
-  Logger.log('═══════════════════════════════════════════════════');
-  Logger.log('GRAPHQL API RESPONSE - FULL RESPONSE');
-  Logger.log('═══════════════════════════════════════════════════');
-  Logger.log('Response code: ' + response.getResponseCode());
-  Logger.log('Response text length: ' + responseText.length + ' characters');
-  Logger.log('');
-  Logger.log('FULL RESPONSE JSON:');
-  Logger.log(responseText);
-  Logger.log('═══════════════════════════════════════════════════');
-  
   var json = JSON.parse(responseText);
 
   // Check for GraphQL errors
   if (json.errors) {
-    Logger.log('❌ GraphQL returned errors:');
-    Logger.log(JSON.stringify(json.errors, null, 2));
     throw `GraphQL API error: ${JSON.stringify(json.errors)}`;
   }
-  
-  // Log parsed structure
-  Logger.log('');
-  Logger.log('PARSED RESPONSE STRUCTURE:');
-  if (json.data && json.data.products) {
-    Logger.log('Number of products: ' + json.data.products.length);
-    if (json.data.products.length > 0) {
-      Logger.log('');
-      Logger.log('FIRST PRODUCT DETAILS:');
-      Logger.log(JSON.stringify(json.data.products[0], null, 2));
-    }
-  } else {
-    Logger.log('No products in response!');
-    Logger.log('Response structure: ' + JSON.stringify(json, null, 2));
-  }
-  Logger.log('═══════════════════════════════════════════════════');
 
-  cache.put(cacheKey, JSON.stringify(json), ttl);
+  try {
+    cache.put(cacheKey, JSON.stringify(json), ttl);
+  } catch (cacheErr) {
+    // Response too large to cache - proceed without caching
+  }
   return json;
 }
 
@@ -332,20 +304,10 @@ function fetchAWSEC2GraphQL(instanceTypes, region, platform, purchaseType, purch
       }
     }`;
 
-    Logger.log('');
-    Logger.log('───────────────────────────────────────────────────');
-    Logger.log(`QUERY FOR: ${instanceType} in ${region} (${operatingSystem})`);
-    Logger.log('───────────────────────────────────────────────────');
-    Logger.log('GraphQL Query:');
-    Logger.log(query);
-    Logger.log('───────────────────────────────────────────────────');
-
     try {
       var json = cachedGraphQL(query);
       
       if (json.data.products && json.data.products.length > 0) {
-        Logger.log(`INFO: Found ${json.data.products.length} products for ${instanceType}`);
-        
         // Find the product with valid pricing for the requested purchase type
         var product = null;
         var priceValue = null;
@@ -358,25 +320,16 @@ function fetchAWSEC2GraphQL(instanceTypes, region, platform, purchaseType, purch
             var candidatePrice = parseFloat(candidate.prices[0].USD);
             
             if (candidatePrice && candidatePrice > 0) {
-              Logger.log(`INFO: Product [${j}] has valid ${purchaseType} price: $${candidatePrice}`);
               product = candidate;
               priceValue = candidatePrice;
               break; // Found a good one!
-            } else {
-              Logger.log(`INFO: Product [${j}] has price ${candidatePrice} - skipping`);
             }
-          } else {
-            Logger.log(`INFO: Product [${j}] has no prices - skipping`);
           }
         }
         
         if (!product) {
-          Logger.log(`ERROR: Found ${json.data.products.length} products but none have valid ${purchaseType} pricing`);
-          Logger.log(`First product details: ${JSON.stringify(json.data.products[0])}`);
           continue; // Skip this instance type
         }
-        
-        Logger.log(`SUCCESS: Using product with ${purchaseType} price $${priceValue}`);
         
         var attributes = {};
         
@@ -386,16 +339,11 @@ function fetchAWSEC2GraphQL(instanceTypes, region, platform, purchaseType, purch
         });
 
         // Build pricing structure based on purchase type
-        Logger.log(`DEBUG: Building pricing structure for purchaseType="${purchaseType}"`);
-        Logger.log(`DEBUG: Parameters - term: ${purchaseTerm}, class: ${offeringClass}, payment: ${paymentOption}`);
-        
         var pricingObj = {};
         
         if (purchaseType === 'ondemand') {
-          Logger.log(`DEBUG: Storing as ondemand`);
           pricingObj.ondemand = priceValue;
         } else if (purchaseType === 'reserved') {
-          Logger.log(`DEBUG: Storing as reserved`);
           // For reserved, store in reserved structure
           pricingObj.ondemand = null; // No on-demand in this query
           pricingObj.reserved = {};
@@ -403,18 +351,11 @@ function fetchAWSEC2GraphQL(instanceTypes, region, platform, purchaseType, purch
           if (priceValue && purchaseTerm && offeringClass && paymentOption) {
             var reservedKey = buildReservedPricingKey(purchaseTerm, offeringClass, paymentOption);
             pricingObj.reserved[reservedKey] = priceValue;
-            Logger.log(`DEBUG: Stored reserved price in key: ${reservedKey} = $${priceValue}`);
-          } else {
-            Logger.log(`WARNING: Reserved price found but missing parameters to build key`);
-            Logger.log(`  purchaseTerm: ${purchaseTerm}, offeringClass: ${offeringClass}, paymentOption: ${paymentOption}`);
           }
         } else {
-          Logger.log(`DEBUG: Storing as ondemand (default fallback for purchaseType=${purchaseType})`);
           // Default fallback
           pricingObj.ondemand = priceValue;
         }
-        
-        Logger.log(`DEBUG: Final pricingObj: ${JSON.stringify(pricingObj)}`);
         
         var instanceObj = {
           instance_type: instanceType,
@@ -429,13 +370,8 @@ function fetchAWSEC2GraphQL(instanceTypes, region, platform, purchaseType, purch
         };
 
         results.push(instanceObj);
-      } else {
-        Logger.log(`WARNING: No product data found for ${instanceType} in ${region} (${platform})`);
-        Logger.log(`Query was: ${query.substring(0, 200)}...`);
       }
     } catch (err) {
-      Logger.log(`Error fetching ${instanceType}: ${err}`);
-      Logger.log(`Stack: ${err.stack}`);
       // Continue with other instances
     }
   }
@@ -642,7 +578,6 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
       var priceFilterParts = [];
       
       if (purchaseType === 'committed-use' || purchaseType === 'committed') {
-        Logger.log(`Fetching on-demand pricing for ${candidateType}, will apply ${cudType} CUD discount`);
         priceFilterParts.push('purchaseOption: "on_demand"');
       } else if (purchaseType === 'preemptible') {
         priceFilterParts.push('purchaseOption: "preemptible"');
@@ -677,8 +612,6 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
       var json = cachedGraphQL(query);
       
       if (json.data.products && json.data.products.length > 0) {
-          Logger.log(`INFO: Found ${json.data.products.length} GCP products for ${candidateType}`);
-          
           for (var j = 0; j < json.data.products.length; j++) {
             var candidateProduct = json.data.products[j];
             
@@ -686,7 +619,6 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
               var candidatePrice = parseFloat(candidateProduct.prices[0].USD);
               
               if (candidatePrice && candidatePrice > 0) {
-                Logger.log(`INFO: GCP Product [${j}] has valid ${purchaseType} price: $${candidatePrice}`);
                 matchedProduct = candidateProduct;
                 priceValue = candidatePrice;
                 matchedTypeName = candidateType;
@@ -702,15 +634,12 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
             break;
           }
         }
-        
-        Logger.log(`INFO: No valid pricing found for candidate ${candidateType}, trying next option if available...`);
       } catch (err) {
-        Logger.log(`Error fetching ${candidateType}: ${err}`);
+        // Continue trying other candidates
       }
     }
     
     if (!matchedProduct) {
-      Logger.log(`ERROR: Unable to find ${purchaseType} pricing for ${machineType} in ${region}`);
       continue;
     }
     
@@ -724,8 +653,6 @@ function fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTer
       // Apply CUD discount to on-demand price
       var discount = getGCPCUDDiscount(purchaseTerm, cudType);
       var cudPrice = priceValue * (1 - discount);
-      
-      Logger.log(`Applying ${cudType} CUD discount: ${(discount * 100).toFixed(0)}% off $${priceValue} = $${cudPrice.toFixed(6)}`);
       
       pricingObj.ondemand = priceValue;
       pricingObj.reserved = {};
@@ -997,9 +924,460 @@ function fetchAWSEBSGraphQL(region, volumeType) {
     }
 
   } catch (err) {
-    Logger.log(`Error fetching EBS pricing for ${volumeType} in ${region}: ${err}`);
+    // Error fetching EBS pricing
   }
 
   return result;
 }
 
+/**
+ * Map database engine from user format to Infracost API format
+ * @param {string} dbEngine - aurora/mysql, aurora/postgresql, mysql, postgresql, mariadb
+ * @return {string} API format - "Aurora MySQL", "Aurora PostgreSQL", etc.
+ */
+function translateDBEngineToAPI(dbEngine) {
+  var map = {
+    'aurora/mysql': 'Aurora MySQL',
+    'aurora/postgresql': 'Aurora PostgreSQL',
+    'mysql': 'MySQL',
+    'postgresql': 'PostgreSQL',
+    'mariadb': 'MariaDB'
+  };
+  return map[dbEngine.toLowerCase()] || dbEngine;
+}
+
+/**
+ * Fetch AWS RDS instance pricing data from GraphQL API
+ * Returns the hourly price for the specified RDS instance
+ * 
+ * @param {object} options - Object containing dbEngine, instanceType, region, purchaseType, purchaseTerm, paymentOption
+ * @return {number} Hourly price for the RDS instance
+ */
+function fetchAWSRDSGraphQL(options) {
+  var dbEngine = options.dbEngine;
+  var instanceType = options.instanceType;
+  var region = options.region;
+  var purchaseType = options.purchaseType || 'ondemand';
+  var purchaseTerm = options.purchaseTerm;
+  var paymentOption = options.paymentOption;
+  
+  // Validate required parameters
+  if (!dbEngine) {
+    throw 'Missing required parameter: dbEngine';
+  }
+  if (!instanceType) {
+    throw 'Missing required parameter: instanceType';
+  }
+  if (!region) {
+    throw 'Missing required parameter: region';
+  }
+  
+  // Map engine to API format
+  var apiEngine = translateDBEngineToAPI(dbEngine);
+  
+  // Check if this is an Aurora engine
+  var isAurora = dbEngine.toLowerCase().indexOf('aurora') >= 0;
+  
+  // Check if I/O-Optimized is requested (default to Standard/false)
+  var ioOptimized = options.ioOptimized || false;
+  
+  // Build attribute filters
+  var attributeFilters = [
+    '{ key: "databaseEngine", value: "' + apiEngine + '" }',
+    '{ key: "instanceType", value: "' + instanceType + '" }',
+    '{ key: "deploymentOption", value: "Single-AZ" }'
+  ];
+  
+  // Build price filter based on purchase type
+  var priceFilterParts = [];
+  
+  if (purchaseType === 'reserved') {
+    priceFilterParts.push('purchaseOption: "reserved"');
+    
+    // Add term length
+    if (purchaseTerm) {
+      var term = (purchaseTerm === '3yr') ? '3yr' : '1yr';
+      priceFilterParts.push('termLength: "' + term + '"');
+    }
+    
+    // Add payment option
+    if (paymentOption) {
+      var apiPaymentOption = translatePaymentOptionToAPI(paymentOption);
+      priceFilterParts.push('termPurchaseOption: "' + apiPaymentOption + '"');
+    }
+  } else {
+    // Default to on-demand
+    priceFilterParts.push('purchaseOption: "on_demand"');
+  }
+  
+  var priceFilter = priceFilterParts.length > 0 ? 
+    'filter: { ' + priceFilterParts.join(', ') + ' }' : '';
+  
+  var query = `{
+    products(
+      filter: {
+        vendorName: "aws"
+        service: "AmazonRDS"
+        productFamily: "Database Instance"
+        region: "${region}"
+        attributeFilters: [
+          ${attributeFilters.join(',\n          ')}
+        ]
+      }
+    ) {
+      attributes { key value }
+      prices(${priceFilter}) {
+        USD
+      }
+    }
+  }`;
+
+  try {
+    var json = cachedGraphQL(query);
+    
+    if (json.data.products && json.data.products.length > 0) {
+      
+      // Find the product with valid pricing
+      var priceValue = null;
+      
+      for (var j = 0; j < json.data.products.length; j++) {
+        var candidate = json.data.products[j];
+        
+        // For Aurora, filter by usagetype to distinguish Standard vs I/O-Optimized
+        if (isAurora && candidate.attributes) {
+          var usagetype = '';
+          for (var k = 0; k < candidate.attributes.length; k++) {
+            if (candidate.attributes[k].key === 'usagetype') {
+              usagetype = candidate.attributes[k].value;
+              break;
+            }
+          }
+          
+          // If usagetype is empty, we can't determine Standard vs I/O-Optimized
+          // Skip this product and try the next one
+          if (!usagetype) {
+            continue;
+          }
+          
+          // Check for both patterns: "IO-Opt" and "IOOptimized" (no hyphen)
+          var isIOOptProduct = usagetype.indexOf('IOOptimized') >= 0 || usagetype.indexOf('IO-Opt') >= 0;
+          
+          // Skip if product type doesn't match what we're looking for
+          if (ioOptimized && !isIOOptProduct) {
+            continue;
+          }
+          if (!ioOptimized && isIOOptProduct) {
+            continue;
+          }
+        }
+        
+        if (candidate.prices && candidate.prices.length > 0) {
+          var candidatePrice = parseFloat(candidate.prices[0].USD);
+          
+          if (candidatePrice && candidatePrice > 0) {
+            priceValue = candidatePrice;
+            break;
+          }
+        }
+      }
+      
+      if (priceValue === null) {
+        throw 'No valid pricing found for ' + instanceType + ' (' + apiEngine + ') in ' + region;
+      }
+      
+      return priceValue;
+      
+    } else {
+      throw 'No RDS instance found: ' + instanceType + ' (' + apiEngine + ') in ' + region;
+    }
+  } catch (err) {
+    throw 'Failed to fetch RDS pricing for ' + instanceType + ': ' + err;
+  }
+}
+
+/**
+ * Map storage type to volumeType for RDS storage queries
+ * @param {string} storageType - aurora, gp2, gp3, io1, io2, magnetic
+ * @return {string} API volumeType value
+ */
+function translateStorageTypeToVolumeType(storageType) {
+  var map = {
+    'gp2': 'General Purpose',
+    'gp3': 'General Purpose-GP3',
+    'io1': 'Provisioned IOPS',
+    'io2': 'Provisioned IOPS (io2)',
+    'magnetic': 'Magnetic'
+  };
+  return map[storageType.toLowerCase()] || null;
+}
+
+/**
+ * Fetch AWS RDS storage pricing data from GraphQL API
+ * Returns the price per GB-month for the specified storage type
+ * 
+ * @param {object} options - Object containing storageType, storageSize, region, dbEngine
+ * @return {number} Price per GB-month (needs to be converted to hourly)
+ */
+function fetchAWSRDSStorageGraphQL(options) {
+  var storageType = options.storageType;
+  var storageSize = options.storageSize;
+  var region = options.region;
+  var dbEngine = options.dbEngine;
+  
+  // Validate required parameters
+  if (!storageType) {
+    throw 'Missing required parameter: storageType';
+  }
+  if (!storageSize) {
+    throw 'Missing required parameter: storageSize';
+  }
+  if (!region) {
+    throw 'Missing required parameter: region';
+  }
+  
+  storageType = storageType.toLowerCase();
+  
+  // Check if it's Aurora storage
+  var isAurora = (storageType === 'aurora');
+  
+  if (isAurora && !dbEngine) {
+    throw 'dbEngine is required for Aurora storage. Specify "aurora/mysql" or "aurora/postgresql".';
+  }
+  
+  var query;
+  
+  if (isAurora) {
+    // Aurora storage query - use regex filters as per Infracost source
+    // For Aurora MySQL: databaseEngine regex "(Any|Aurora MySQL)"
+    // For Aurora PostgreSQL: databaseEngine regex "Aurora PostgreSQL"
+    var engineRegex = dbEngine.toLowerCase().indexOf('postgresql') >= 0 
+      ? 'Aurora PostgreSQL' 
+      : '(Any|Aurora MySQL)';
+    
+    query = `{
+      products(
+        filter: {
+          vendorName: "aws"
+          service: "AmazonRDS"
+          productFamily: "Database Storage"
+          region: "${region}"
+          attributeFilters: [
+            { key: "databaseEngine", value_regex: "${engineRegex}" }
+            { key: "usagetype", value_regex: "Aurora:StorageUsage$" }
+          ]
+        }
+      ) {
+        attributes { key value }
+        prices(filter: { purchaseOption: "on_demand" }) {
+          USD
+        }
+      }
+    }`;
+  } else {
+    // EBS-backed RDS storage query
+    var volumeType = translateStorageTypeToVolumeType(storageType);
+    
+    if (!volumeType) {
+      throw 'Invalid storage type: ' + storageType + '. Valid types: aurora, gp2, gp3, io1, io2, magnetic';
+    }
+    
+    // Default to MySQL if no engine specified for EBS-backed storage
+    var engineForEBS = dbEngine ? translateDBEngineToAPI(dbEngine) : 'MySQL';
+    
+    query = `{
+      products(
+        filter: {
+          vendorName: "aws"
+          service: "AmazonRDS"
+          productFamily: "Storage"
+          region: "${region}"
+          attributeFilters: [
+            { key: "databaseEngine", value: "${engineForEBS}" }
+            { key: "volumeType", value: "${volumeType}" }
+          ]
+        }
+      ) {
+        attributes { key value }
+        prices(filter: { purchaseOption: "on_demand" }) {
+          USD
+        }
+      }
+    }`;
+  }
+  
+  try {
+    var json = cachedGraphQL(query);
+    
+    if (json.data.products && json.data.products.length > 0) {
+      // Find the first product with valid pricing
+      var pricePerGBMonth = null;
+      
+      // Map the requested engine to API format for client-side matching
+      var apiEngine = isAurora ? translateDBEngineToAPI(dbEngine) : null;
+      
+      for (var j = 0; j < json.data.products.length; j++) {
+        var candidate = json.data.products[j];
+        
+        // Extract attributes for client-side validation
+        // Server-side value_regex filters are unreliable, so we must validate locally
+        var candidateUsagetype = '';
+        var candidateEngine = '';
+        var candidateVolumeType = '';
+        if (candidate.attributes) {
+          for (var k = 0; k < candidate.attributes.length; k++) {
+            if (candidate.attributes[k].key === 'usagetype') candidateUsagetype = candidate.attributes[k].value;
+            if (candidate.attributes[k].key === 'databaseEngine') candidateEngine = candidate.attributes[k].value;
+            if (candidate.attributes[k].key === 'volumeType') candidateVolumeType = candidate.attributes[k].value;
+          }
+        }
+        
+        // Client-side validation
+        if (isAurora) {
+          // Must contain "Aurora:StorageUsage" in the usagetype
+          if (candidateUsagetype.indexOf('Aurora:StorageUsage') === -1) {
+            continue;
+          }
+          // Verify engine: accept "Any" or the exact requested engine
+          if (candidateEngine && candidateEngine !== 'Any' && candidateEngine !== apiEngine) {
+            continue;
+          }
+        } else {
+          // EBS-backed: validate volumeType and engine match
+          if (candidateVolumeType && candidateVolumeType !== volumeType) {
+            continue;
+          }
+          if (candidateEngine && candidateEngine !== engineForEBS) {
+            continue;
+          }
+        }
+        
+        if (candidate.prices && candidate.prices.length > 0) {
+          var candidatePrice = parseFloat(candidate.prices[0].USD);
+          
+          if (candidatePrice && candidatePrice > 0) {
+            pricePerGBMonth = candidatePrice;
+            break;
+          }
+        }
+      }
+      
+      if (pricePerGBMonth === null) {
+        throw 'No valid storage pricing found for ' + storageType + ' in ' + region;
+      }
+      
+      return pricePerGBMonth;
+      
+    } else {
+      throw 'No RDS storage found: ' + storageType + ' in ' + region;
+    }
+  } catch (err) {
+    throw 'Failed to fetch RDS storage pricing for ' + storageType + ': ' + err;
+  }
+}
+
+/**
+ * Fetch AWS RDS Aurora I/O pricing data from GraphQL API
+ * Returns the price per single I/O request (e.g., $0.0000002)
+ * Only applicable to Aurora Standard (not I/O-Optimized or regular RDS)
+ * 
+ * @param {object} options - Object containing region, dbEngine
+ * @return {number} Price per single I/O request
+ */
+function fetchAWSRDSIOGraphQL(options) {
+  var region = options.region;
+  var dbEngine = options.dbEngine;
+  
+  // Validate required parameters
+  if (!region) {
+    throw 'Missing required parameter: region';
+  }
+  if (!dbEngine) {
+    throw 'Missing required parameter: dbEngine';
+  }
+  
+  // Validate that it's Aurora
+  var dbEngineLower = dbEngine.toLowerCase();
+  if (dbEngineLower.indexOf('aurora') === -1) {
+    throw 'I/O pricing is only applicable to Aurora databases. Got: ' + dbEngine;
+  }
+  
+  var apiEngine = translateDBEngineToAPI(dbEngine);
+  
+  // Query for Aurora I/O usage - filter by usagetype containing "StorageIOUsage"
+  // Note: databaseEngine for I/O products may be "Any" or "Aurora MySQL", 
+  // so we filter by usagetype regex server-side and validate client-side
+  var query = `{
+    products(
+      filter: {
+        vendorName: "aws"
+        service: "AmazonRDS"
+        productFamily: "System Operation"
+        region: "${region}"
+        attributeFilters: [
+          { key: "usagetype", value_regex: "StorageIOUsage" }
+        ]
+      }
+    ) {
+      attributes { key value }
+      prices(filter: { purchaseOption: "on_demand" }) {
+        USD
+      }
+    }
+  }`;
+  
+  try {
+    var json = cachedGraphQL(query);
+    
+    if (json.data.products && json.data.products.length > 0) {
+      // Find the Aurora StorageIOUsage product
+      // Must validate usagetype to ensure it's Aurora I/O (not CDC or other products)
+      var pricePerIO = null;
+      
+      for (var j = 0; j < json.data.products.length; j++) {
+        var candidate = json.data.products[j];
+        
+        // Extract usagetype and databaseEngine from attributes
+        var usagetype = '';
+        var candidateEngine = '';
+        for (var k = 0; k < candidate.attributes.length; k++) {
+          if (candidate.attributes[k].key === 'usagetype') {
+            usagetype = candidate.attributes[k].value;
+          }
+          if (candidate.attributes[k].key === 'databaseEngine') {
+            candidateEngine = candidate.attributes[k].value;
+          }
+        }
+        
+        // Must contain "Aurora:StorageIOUsage" in the usagetype
+        if (usagetype.indexOf('Aurora:StorageIOUsage') === -1) {
+          continue;
+        }
+        
+        // Verify the engine matches: accept "Any", the exact engine, or empty
+        if (candidateEngine && candidateEngine !== 'Any' && candidateEngine !== apiEngine) {
+          continue;
+        }
+        
+        if (candidate.prices && candidate.prices.length > 0) {
+          var candidatePrice = parseFloat(candidate.prices[0].USD);
+          
+          if (candidatePrice && candidatePrice > 0) {
+            pricePerIO = candidatePrice;
+            break;
+          }
+        }
+      }
+      
+      if (pricePerIO === null) {
+        throw 'No valid Aurora I/O pricing found for ' + apiEngine + ' in ' + region;
+      }
+      
+      return pricePerIO;
+      
+    } else {
+      throw 'No Aurora I/O pricing found for ' + apiEngine + ' in ' + region;
+    }
+  } catch (err) {
+    throw 'Failed to fetch Aurora I/O pricing for ' + apiEngine + ': ' + err;
+  }
+}

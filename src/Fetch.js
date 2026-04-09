@@ -19,8 +19,22 @@ function fetchProducts(cloudProduct, filterTypes, options) {
 
 function fetchUrl(apiPath) {
     let fetches = [apiPath];
-    const resp = UrlFetchApp.fetchAll(fetches)[0]; 
+    const resp = UrlFetchApp.fetchAll(fetches)[0];
     if (resp.getResponseCode() != 200) throw `Unable to load the URL: ${apiPath}`;
+    return JSON.parse(resp.getContentText());
+}
+
+function fetchPsApi(path) {
+    if (!cfg.psApiToken) throw 'Missing psApiToken in Script Properties. Create a PlanetScale service token and store it as psApiToken.';
+    const url = `${cfg.psApiBase}${cfg.psApiOrg}/${path}`;
+    const resp = UrlFetchApp.fetch(url, {
+        headers: {
+            'Authorization': `${cfg.psApiToken}`,
+            'Accept': 'application/json',
+        },
+        muteHttpExceptions: true,
+    });
+    if (resp.getResponseCode() != 200) throw `PlanetScale API error (${resp.getResponseCode()}): ${resp.getContentText()}`;
     return JSON.parse(resp.getContentText());
 }
 
@@ -39,7 +53,11 @@ function fetchPSDBRegions() {
 }
 
 function fetchCloudProviderFromPSDBRegion(region) {
-    return fetchPSDBRegions().filter(r => r.slug == region)[0].display_name.toLowerCase();
+    var match = fetchPSDBRegions().filter(r => r.slug == region)[0];
+    if (!match) {
+        throw `No PlanetScale region found for slug "${region}". Please check the region name.`;
+    }
+    return match.display_name.toLowerCase();
 }
 
 function fetchPSDBVTGates(filterTypes) {
@@ -55,12 +73,13 @@ function fetchPSDBVTGates(filterTypes) {
 }
 
 function fetchPSDBInstances(filterTypes, options) {
-    let skuApi = `${cfg.psWebApi}cluster-size-skus`;
+    let queryParams = 'rates=true';
     if(options.region){
-        skuApi = `${skuApi}?region=${options.region}`;
+        queryParams += `&region=${options.region}`;
     }
+    let skuApi = `cluster-size-skus?${queryParams}`;
 
-    let responses = fetchUrl(skuApi).filter(p => (p.rate && (filterTypes.includes(p.name) || filterTypes.length == 0)));
+    let responses = fetchPsApi(skuApi).filter(p => (p.enabled !== false && p.rate && (filterTypes.includes(p.name) || filterTypes.length == 0)));
 
     responses.forEach(r => {
         r.options = options;
@@ -69,44 +88,117 @@ function fetchPSDBInstances(filterTypes, options) {
     return formatPSDB(responses);
 }
 
+function parseTshirtSize(tshirtSize) {
+    if (!tshirtSize) return { productType: 'vitess', provider: null, cloudInstanceType: null };
+    var parts = tshirtSize.split('.');
+    var productType = 'vitess';
+    if (parts[0] === 'pg') productType = 'postgres';
+
+    var provider = null;
+    var cloudInstanceType = null;
+
+    if (parts[1] === 'aws') {
+        provider = 'aws';
+        // e.g., vt.aws.i4i.large -> i4i.large
+        cloudInstanceType = parts.slice(2).join('.');
+    } else if (parts[1] === 'gcp') {
+        provider = 'gcp';
+        // e.g., vt.gcp.n2d-highmem-2-localssd-1 -> n2d-highmem-2 (strip localssd suffix)
+        var gcpFull = parts.slice(2).join('.');
+        cloudInstanceType = gcpFull.replace(/-localssd-\d+$/, '');
+    }
+
+    return { productType: productType, provider: provider, cloudInstanceType: cloudInstanceType };
+}
+
+function isGravitonFamily(instanceFamily) {
+    // AWS Graviton families have 'g' immediately after the generation digit(s).
+    // Examples: r6g, m7g, c6g, r6gd, m6gd (Graviton)
+    // Non-Graviton: r6i, r6id, m5, m5d, c5, i3, i4i (x86)
+    var match = instanceFamily.match(/^[a-z](\d+)(.*)/);
+    if (!match) return false;
+    var variant = match[2];
+    return variant.length > 0 && variant.charAt(0) === 'g';
+}
+
 function formatPSDB(allProducts) {
+    if (!allProducts || allProducts.length === 0) {
+        return allProducts;
+    }
 
-    let cloudProds = [];
-    let parentProviderRegion = fetchCloudProviderFromPSDBRegion(allProducts[0].options.region).split(" ");
+    // Check if we have any non-metal SKUs that need cloud instance matching
+    var hasNonMetal = false;
+    for (var j = 0; j < allProducts.length; j++) {
+        if (!allProducts[j].metal) { hasNonMetal = true; break; }
+    }
 
-    switch(parentProviderRegion[0].toLowerCase()){
-    case 'aws':
-        cloudProds = fetchProducts('ec2', [], { region:parentProviderRegion[1], platform:'linux', });
-        break;
-    case 'gcp':
-        cloudProds = fetchProducts('compute', [], { region:parentProviderRegion[1], });
-        break;
+    // Only fetch cloud products if we have non-metal SKUs that need matching
+    var cloudProds = [];
+    if (hasNonMetal) {
+        var parentProviderRegion = fetchCloudProviderFromPSDBRegion(allProducts[0].options.region).split(" ");
+
+        switch(parentProviderRegion[0].toLowerCase()){
+        case 'aws':
+            cloudProds = fetchProducts('ec2', [], { region:parentProviderRegion[1], platform:'linux', });
+            // Filter out Graviton (ARM) families for Vitess instance matching
+            cloudProds = cloudProds.filter(function(p) {
+                return !isGravitonFamily(p.instance_family);
+            });
+            break;
+        case 'gcp':
+            cloudProds = fetchProducts('compute', [], { region:parentProviderRegion[1], });
+            break;
+        }
     }
 
     for (var i = 0; i < allProducts.length; i++) {
+        var parsed = allProducts[i].tshirt_size
+            ? parseTshirtSize(allProducts[i].tshirt_size)
+            : { productType: 'vitess', provider: null, cloudInstanceType: null };
+
+        allProducts[i].product_type = parsed.productType;
         allProducts[i].instance_type = allProducts[i].name;
         allProducts[i].region = allProducts[i].options ? allProducts[i].options.region : null;
-        allProducts[i].ps_instance_class = allProducts[i].metal ? 'metal' : '';
-        if (allProducts[i].ps_instance_class == ''){
-            let tss = allProducts[i].tshirt_size.split('.');
-            switch (tss[1]) {
-            case 'm1':
-                allProducts[i].ps_instance_class = 'memory';
-                break;
-            case 'g1':
-                allProducts[i].ps_instance_class = 'general';
-                break;
-            case 'c1':
-                allProducts[i].ps_instance_class = 'compute';
-                break;
-            }
-        }
-      
+
         allProducts[i].vCPU = parseFloat(allProducts[i].cpu);
         allProducts[i].memory = parseInt(allProducts[i].ram)/1024/1024/1024;
         allProducts[i].onboard_storage = parseInt(allProducts[i].storage)/1024/1024/1024;
-        let prodMatch = findCloudInstanceMatch(allProducts[i].vCPU, allProducts[i].memory, allProducts[i].ps_instance_class, cloudProds);   
-        if (prodMatch) allProducts[i].provider_instance_type = prodMatch.instance_type;
+
+        // Determine ps_instance_class
+        if (allProducts[i].metal) {
+            allProducts[i].ps_instance_class = 'metal';
+        } else if (allProducts[i].tshirt_size) {
+            var tss = allProducts[i].tshirt_size.split('.');
+            switch (tss[1]) {
+            case 'm1': allProducts[i].ps_instance_class = 'memory'; break;
+            case 'g1': allProducts[i].ps_instance_class = 'general'; break;
+            case 'c1': allProducts[i].ps_instance_class = 'compute'; break;
+            default: allProducts[i].ps_instance_class = 'memory';
+            }
+        } else {
+            // No tshirt_size (v1 API): derive from CPU/RAM ratio
+            var gbPerCpu = allProducts[i].vCPU > 0 ? allProducts[i].memory / allProducts[i].vCPU : 0;
+            if (gbPerCpu >= 6) allProducts[i].ps_instance_class = 'memory';
+            else if (gbPerCpu >= 3) allProducts[i].ps_instance_class = 'general';
+            else allProducts[i].ps_instance_class = 'compute';
+        }
+
+        // VTGate fields
+        allProducts[i].default_vtgate = allProducts[i].default_vtgate || null;
+        allProducts[i].default_vtgate_rate = allProducts[i].default_vtgate_rate || null;
+
+        // Provider instance type resolution
+        if (allProducts[i].metal && parsed.cloudInstanceType) {
+            // Metal with tshirt_size: full type from tshirt (e.g., vt.aws.i3en.12xlarge -> i3en.12xlarge)
+            allProducts[i].provider_instance_type = parsed.cloudInstanceType;
+        } else if (allProducts[i].metal && allProducts[i].provider_instance_type) {
+            // Metal from v1 API: already has provider_instance_type (family only, e.g., "i3en")
+            // Keep as-is
+        } else if (!allProducts[i].metal) {
+            // Non-metal: match against cloud catalog (Graviton-filtered for AWS)
+            var prodMatch = findCloudInstanceMatch(allProducts[i].vCPU, allProducts[i].memory, allProducts[i].ps_instance_class, cloudProds);
+            if (prodMatch) allProducts[i].provider_instance_type = prodMatch.instance_type;
+        }
     }
 
     return allProducts;
@@ -121,35 +213,23 @@ function fetchGCPCompute(filterTypes, options) {
     // Strategy: Same as AWS - chunk large sets into manageable batches (max 5)
     if (filterTypes.length <= 3) {
         // Small set - use individual queries
-        Logger.log(`Using individual GraphQL queries for ${filterTypes.length} GCP instances (${purchaseType})`);
         responses = fetchGCPComputeGraphQL(filterTypes, region, purchaseType, purchaseTerm, cudType);
     } else {
         // Large set - split into chunks of 10 and batch each chunk
         var chunkSize = 5;
-        var totalChunks = Math.ceil(filterTypes.length / chunkSize);
-        
-        Logger.log(`Using chunked batched GraphQL for ${filterTypes.length} GCP instances (${purchaseType})`);
-        Logger.log(`Splitting into ${totalChunks} batches of up to ${chunkSize} instances each`);
         
         for (var i = 0; i < filterTypes.length; i += chunkSize) {
             var chunk = filterTypes.slice(i, i + chunkSize);
-            var chunkNum = Math.floor(i / chunkSize) + 1;
-            
-            Logger.log(`Processing GCP batch ${chunkNum}/${totalChunks} (${chunk.length} instances)...`);
             
             try {
                 var chunkResults = fetchGCPComputeGraphQLBatched(chunk, region, purchaseType, purchaseTerm, cudType);
                 responses = responses.concat(chunkResults);
-                Logger.log(`  ✅ Batch ${chunkNum} completed: ${chunkResults.length} instances`);
             } catch (err) {
-                Logger.log(`  ❌ Batch ${chunkNum} failed: ${err}`);
-                Logger.log(`  Falling back to individual queries for this batch...`);
+                // Fallback to individual queries for this batch
                 var individualResults = fetchGCPComputeGraphQL(chunk, region, purchaseType, purchaseTerm, cudType);
                 responses = responses.concat(individualResults);
             }
         }
-        
-        Logger.log(`Total GCP instances fetched: ${responses.length}/${filterTypes.length}`);
     }
 
     // GCP committed-use is now handled in the main query above
@@ -226,36 +306,23 @@ function fetchAWSEC2(filterTypes, options) {
     
     if (filterTypes.length <= 3) {
         // Small set - use individual queries
-        Logger.log(`Using individual GraphQL queries for ${filterTypes.length} AWS EC2 instances (${purchaseType})`);
         responses = fetchAWSEC2GraphQL(filterTypes, region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption);
     } else {
         // Large set - split into chunks of 10 and batch each chunk
         var chunkSize = 10;
-        var totalChunks = Math.ceil(filterTypes.length / chunkSize);
-        
-        Logger.log(`Using chunked batched GraphQL for ${filterTypes.length} AWS EC2 instances (${purchaseType})`);
-        Logger.log(`Splitting into ${totalChunks} batches of up to ${chunkSize} instances each`);
         
         for (var i = 0; i < filterTypes.length; i += chunkSize) {
             var chunk = filterTypes.slice(i, i + chunkSize);
-            var chunkNum = Math.floor(i / chunkSize) + 1;
-            
-            Logger.log(`Processing batch ${chunkNum}/${totalChunks} (${chunk.length} instances)...`);
             
             try {
                 var chunkResults = fetchAWSEC2GraphQLBatched(chunk, region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption);
                 responses = responses.concat(chunkResults);
-                Logger.log(`  ✅ Batch ${chunkNum} completed: ${chunkResults.length} instances`);
             } catch (err) {
-                Logger.log(`  ❌ Batch ${chunkNum} failed: ${err}`);
                 // If a batch fails, try individual queries for that chunk only
-                Logger.log(`  Falling back to individual queries for this batch...`);
                 var individualResults = fetchAWSEC2GraphQL(chunk, region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption);
                 responses = responses.concat(individualResults);
             }
         }
-        
-        Logger.log(`Total instances fetched: ${responses.length}/${filterTypes.length}`);
     }
 
     return formatAWSEC2(responses);
@@ -309,7 +376,7 @@ function fetchAWSEBS(filterTypes, options) {
                     responses.push(volumeData);
                 }
             } catch (err) {
-                Logger.log(`Error fetching EBS ${volumeType} for ${region}: ${err}`);
+                // Skip volume types that fail to fetch
             }
         });
     });

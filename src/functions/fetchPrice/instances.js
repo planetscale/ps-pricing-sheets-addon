@@ -16,22 +16,15 @@ function fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, opt
     throw 'Search returned more than one product. Please check the instance type and try again.';
   }
   
-  // Log the product structure for debugging
-  // Both AWS and GCP now use unified 'pricing' structure
-  if (!prod[0].pricing || !prod[0].pricing[options.region]) {
-    Logger.log(`DEBUG: Product structure for ${instanceType}:`);
-    Logger.log(JSON.stringify(prod[0], null, 2));
-    throw `Product data exists but pricing is incomplete for ${instanceType} in ${options.region}. Check execution logs for details.`;
+  // AWS and GCP use a 'pricing' structure; PSDB has rate directly
+  if (cloudProduct !== 'psdb' && (!prod[0].pricing || !prod[0].pricing[options.region])) {
+    throw `Product data exists but pricing is incomplete for ${instanceType} in ${options.region}.`;
   }
   
   let price = getHourlyCost(cloudProduct, prod[0], options);
   
   if (!price) {
-    Logger.log(`DEBUG: getHourlyCost returned null for ${instanceType}`);
-    Logger.log(`Options: ${JSON.stringify(options)}`);
-    Logger.log(`Product: ${JSON.stringify(prod[0])}`);
-    
-    throw `Price for ${instanceType} returned null. Please check your options and try again. See execution logs for details.`;
+    throw `Price for ${instanceType} returned null. Please check your options and try again.`;
   }
   
   return price;
@@ -39,15 +32,10 @@ function fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, opt
 }
 
 function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
-  Logger.log(`DEBUG: fetchRegionalInstanceMatrix called with purchaseType="${options.purchaseType}"`);
-  Logger.log(`DEBUG: Options: ${JSON.stringify(options)}`);
-  
   validateInstanceOptions(cloudProvider, cloudProduct, options);
 
   let instanceTypes = [];
   let allProducts = fetchProducts(cloudProduct, instanceTypes, options);
-  
-  Logger.log(`DEBUG: fetchProducts returned ${allProducts.length} products`);
 
   // sort results "logically"
   allProducts = allProducts.sort(function (a,b) { 
@@ -59,6 +47,8 @@ function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
 
     if (parseInt(a.memory) > parseInt(b.memory)) return -1;
     if (parseInt(a.memory) < parseInt(b.memory)) return 1;
+
+    return 0;
   });
 
   // header row
@@ -75,9 +65,12 @@ function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
     'Monthly Cost'
   ]);
 
-  // if PSDB, add a column for the parent provider instance type
+  // if PSDB, add columns for the parent provider instance type, default VTGate, VTGate rate, and product type
   if (cloudProduct === 'psdb') {
     results[0].push('Parent Provider Instance Type');
+    results[0].push('Default VTGate');
+    results[0].push('Default VTGate Rate');
+    results[0].push('Product Type');
   }
 
   for (var i = allProducts.length - 1; i >= 0; i--) {
@@ -86,7 +79,6 @@ function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
     var prod_price = getHourlyCost(cloudProduct, allProducts[i], options);
     
     if (!prod_price) {
-      Logger.log(`DEBUG: Skipping ${allProducts[i].instance_type} - no price for purchaseType=${options.purchaseType}`);
       continue;
     }
     
@@ -115,9 +107,18 @@ function fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options) {
     // Monthly Cost
     prodResult.push(prod_monthly_price);
 
-    // Provider Instance Type
-    prodResult.push(allProducts[i].provider_instance_type);
-
+    // For PSDB, add provider instance type, VTGate info, and product type
+    if (cloudProduct === 'psdb') {
+      prodResult.push(allProducts[i].provider_instance_type || '');
+      if (allProducts[i].product_type === 'vitess' || !allProducts[i].product_type) {
+        prodResult.push(allProducts[i].default_vtgate || '');
+        prodResult.push(allProducts[i].default_vtgate_rate || '');
+      } else {
+        prodResult.push('');
+        prodResult.push('');
+      }
+      prodResult.push(allProducts[i].product_type || 'vitess');
+    }
 
     results.push(prodResult);
   }
@@ -190,10 +191,12 @@ function getMonthlyCostPSDB(product, options) {
   if(extraReplicas) {
     result += parseInt(product.replica_rate) * parseInt(extraReplicas);
   }
-  if(extraVtGateReplicas) {
+  // VTGate pricing only applies to Vitess products
+  var isVitess = !product.product_type || product.product_type === 'vitess';
+  if(isVitess && extraVtGateReplicas) {
     result += parseInt(product.default_vtgate_rate) * parseInt(extraVtGateReplicas);
   }
-  if(vtGateOverridePrice > 0) {
+  if(isVitess && vtGateOverridePrice > 0) {
     let totalVtGates = 3 + parseInt(extraVtGateReplicas);
     let origVtGatePrice = (product.default_vtgate_rate * shards) / 3 * parseInt(totalVtGates);
     let newVtGatePrice = (vtGateOverridePrice * shards) / 3 * parseInt(totalVtGates);
@@ -209,42 +212,30 @@ function getMonthlyCostPSDB(product, options) {
 
 function getHourlyCostEC2(product, options) {
   var { region, purchaseType, purchaseTerm, paymentOption, offeringClass, platform } = options;
-
-  Logger.log(`DEBUG: getHourlyCostEC2 for ${product.instance_type}, purchaseType=${purchaseType}`);
   
   let result = parseFloat(0);
 
   if (!product.pricing) {
-    Logger.log(`ERROR: Product ${product.instance_type} has no pricing object`);
     return null;
   }
   
   if (!product.pricing[region]) {
-    Logger.log(`ERROR: Product ${product.instance_type} pricing missing region ${region}`);
-    Logger.log(`Available regions: ${Object.keys(product.pricing).join(', ')}`);
     return null;
   }
   
   if (!product.pricing[region][platform]) {
-    Logger.log(`ERROR: Product ${product.instance_type} pricing missing platform ${platform} in region ${region}`);
-    Logger.log(`Available platforms: ${Object.keys(product.pricing[region]).join(', ')}`);
     return null;
   }
-  
-  Logger.log(`DEBUG: Pricing structure for ${product.instance_type}: ${JSON.stringify(product.pricing[region][platform])}`);
   
   switch (purchaseType) {
   case 'ondemand':
     var ondemandValue = product.pricing[region][platform].ondemand;
-    Logger.log(`DEBUG: ondemand value for ${product.instance_type}: ${ondemandValue} (type: ${typeof ondemandValue})`);
     
     if (!ondemandValue && ondemandValue !== 0) {
-      Logger.log(`ERROR: No ondemand pricing found for ${product.instance_type} in ${region} (${platform})`);
       return null;
     }
     
     if (ondemandValue === 0) {
-      Logger.log(`ERROR: Ondemand price is 0 for ${product.instance_type} in ${region} (${platform}) - this is likely incorrect`);
       return null;
     }
     
@@ -291,8 +282,6 @@ function getHourlyCostEC2(product, options) {
 function getHourlyCostCompute(product, options) {
   var { region, purchaseType, purchaseTerm, cudType } = options;
   cudType = cudType || 'flexi';
-  
-  Logger.log(`DEBUG: getHourlyCostCompute for ${product.instance_type}, purchaseType=${purchaseType}`);
 
   let result = parseFloat(0);
   
@@ -300,23 +289,16 @@ function getHourlyCostCompute(product, options) {
   var platform = "linux"; // GCP instances are Linux
   
   if (!product.pricing) {
-    Logger.log(`ERROR: Product ${product.instance_type} has no pricing object`);
     return null;
   }
   
   if (!product.pricing[region]) {
-    Logger.log(`ERROR: Product ${product.instance_type} pricing missing region ${region}`);
-    Logger.log(`Available regions: ${Object.keys(product.pricing).join(', ')}`);
     return null;
   }
   
   if (!product.pricing[region][platform]) {
-    Logger.log(`ERROR: Product ${product.instance_type} pricing missing platform ${platform}`);
-    Logger.log(`Available platforms: ${Object.keys(product.pricing[region]).join(', ')}`);
     return null;
   }
-  
-  Logger.log(`DEBUG: Pricing structure for ${product.instance_type}: ${JSON.stringify(product.pricing[region][platform])}`);
 
   switch (purchaseType) {
   case 'ondemand':
@@ -340,7 +322,6 @@ function getHourlyCostCompute(product, options) {
     }
     
     if (!product.pricing[region][platform].reserved[key]) {
-      Logger.log(`ERROR: No ${cudType} CUD pricing found for ${purchaseTerm}`);
       return null;
     }
     result = parseFloat(product.pricing[region][platform].reserved[key]);

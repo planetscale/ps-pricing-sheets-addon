@@ -17,7 +17,7 @@
  */
 
 function CLOUD_ALL_BY_REGION(cloudProvider="aws", cloudProduct="ec2", region, purchaseType, purchaseTerm, offeringClass="standard", paymentOption, platform="linux") {
-    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
+    var options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
     return fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options);
 }
 
@@ -43,7 +43,7 @@ function AWS_EC2_ALL_BY_REGION(region, purchaseType, purchaseTerm, offeringClass
     platform = platform || 'linux';
     purchaseType = purchaseType || 'ondemand';
     
-    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
+    var options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
     return fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options);
 }
 
@@ -70,7 +70,7 @@ function AWS_EC2_HOURLY(instanceType, region, purchaseType, purchaseTerm, offeri
     platform = platform || 'linux';
     purchaseType = purchaseType || 'ondemand';
     
-    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
+    var options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, offeringClass, paymentOption, platform });
     return fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, options);
 }
 
@@ -90,61 +90,151 @@ function AWS_EC2_HOURLY(instanceType, region, purchaseType, purchaseTerm, offeri
 function AWS_EBS_HOURLY(region, volumeType, storageType, volumeSize) {
     var cloudProvider = 'aws';
     var cloudProduct = 'ebs';
-    options = getObjectWithValuesToLowerCase({ region, volumeType, storageType, volumeSize });
+    var options = getObjectWithValuesToLowerCase({ region, volumeType, storageType, volumeSize });
     return fetchSingleVolumePrice(cloudProvider, cloudProduct, options);
 }
 
-// TODO
-
 /**
- * Returns the instance price for a RDS DB instance
+ * Returns the hourly cost for an RDS instance.
+ * For Aurora: defaults to Standard storage config (not I/O-Optimized).
  * 
  * @param {"aurora/mysql"} dbEngine Database engine: aurora/mysql, aurora/postgresql, mysql, mariadb, postgresql
  * @param {"db.r6g.xlarge"} instanceType Type of RDS instance
- * @param {"us-east-1"} region Override the region setting (optional)
- * @param {"reserved"} purchaseType Either "ondemand" or "reserved"
- * @param {"3yr"} purchaseTerm Purchase term (for reserved instances)
- * @param {"partial_upfront"} paymentOption Payment option: no_upfront, partial_upfront, all_upfront (for reserved instances)
- *
- * @returns price
+ * @param {"us-east-1"} region AWS region
+ * @param {"ondemand"} purchaseType Either "ondemand" or "reserved"
+ * @param {"1yr"} purchaseTerm Purchase term: "1yr" or "3yr" (for reserved instances)
+ * @param {"no_upfront"} paymentOption Payment option: no_upfront, partial_upfront, all_upfront (for reserved instances)
+ * @param {false} ioOptimized For Aurora only: set to TRUE for I/O-Optimized pricing (higher compute cost, no I/O charges)
+ * @returns hourly_cost
  * @customfunction
  */
-/*
-function AWS_RDS(dbEngine, instanceType, region, purchaseType, purchaseTerm, paymentOption) {
-    // rewrite arguments to lowercase
-    const options = getObjectWithValuesToLowerCase({ dbEngine, instanceType, region, purchaseType, purchaseTerm, paymentOption });
+function AWS_RDS_HOURLY(dbEngine, instanceType, region, purchaseType, purchaseTerm, paymentOption, ioOptimized) {
+    // Convert arguments to lowercase
+    var options = getObjectWithValuesToLowerCase({ 
+        dbEngine: dbEngine,
+        instanceType: instanceType,
+        region: region,
+        purchaseType: purchaseType,
+        purchaseTerm: purchaseTerm,
+        paymentOption: paymentOption
+    });
     
-    if(options.purchaseType === "on-demand") options.purchaseType = "ondemand";
-    // validation
-    if(!["ondemand","reserved"].includes(options.purchaseType))
-      throw `Purchase type "${options.purchaseType}" is not supported. Please use "ondemand" or "reserved".`;
-
-    if(options.purchaseType === "ondemand") {
-      if(purchaseTerm || paymentOption)
-        throw `Purchase term "${purchaseTerm}" ${paymentOption ? `and payment option "${paymentOption}" are`: "is"} only supported for reserved instances. Remove these arguments for on-demand instances.`
+    // Handle ioOptimized parameter (boolean, not lowercased)
+    // Accept TRUE, true, "true", "TRUE", 1, etc.
+    if (ioOptimized === true || ioOptimized === 'true' || ioOptimized === 'TRUE' || ioOptimized === 1) {
+        options.ioOptimized = true;
+    } else {
+        options.ioOptimized = false;
     }
-
-    // rewrite purchaseType
-    if(options.purchaseType === "reserved") options.purchaseType = "reserved-instance";
     
-    return fetchApiRDS(options, arguments.callee.name);
+    // Set defaults
+    options.purchaseType = options.purchaseType || 'ondemand';
+    
+    // Normalize purchase type variations
+    if (options.purchaseType === 'on-demand') {
+        options.purchaseType = 'ondemand';
+    }
+    
+    // Validation
+    if (!['ondemand', 'reserved'].includes(options.purchaseType)) {
+        throw 'Purchase type "' + options.purchaseType + '" is not supported. Please use "ondemand" or "reserved".';
+    }
+    
+    // Validate reserved instance parameters
+    if (options.purchaseType === 'reserved') {
+        if (!options.purchaseTerm) {
+            throw 'Purchase term is required for reserved instances. Please specify "1yr" or "3yr".';
+        }
+        if (!options.paymentOption) {
+            throw 'Payment option is required for reserved instances. Please specify "no_upfront", "partial_upfront", or "all_upfront".';
+        }
+    }
+    
+    // Ignore ioOptimized for non-Aurora engines
+    if (options.ioOptimized && options.dbEngine.indexOf('aurora') === -1) {
+        options.ioOptimized = false;
+    }
+    
+    return fetchAWSRDSGraphQL(options);
 }
-*/
 
 /**
- * Returns the price of RDS storage.
- *
- * @param {"gp2"} storageType Storage type: aurora, gp2, piops, magnetic
- * @param {4000} storageSize Volume size in GB
- * @param {"us-east-2"} region Region
- * @returns price
+ * Returns the hourly cost for RDS storage.
+ * For Aurora: specify dbEngine (aurora/mysql or aurora/postgresql)
+ * For EBS-backed RDS: dbEngine is optional (defaults to MySQL)
+ * 
+ * @param {"aurora"} storageType Storage type: aurora, gp2, gp3, io1, io2, magnetic
+ * @param {1000} storageSize Storage size in GB
+ * @param {"us-east-1"} region AWS region
+ * @param {"aurora/mysql"} dbEngine Database engine (required for Aurora, optional for others)
+ * @returns hourly_cost
  * @customfunction
  */
-/*
-function AWS_RDS_STORAGE(storageType, storageSize, region) {
-  return analyticsWrapper(arguments, () => {
-    const options = getObjectWithValuesToLowerCase({ storageType, storageSize, region });
-    return fetchApiRDSStorage(options, arguments.callee.name);
-  });
+function AWS_RDS_STORAGE_HOURLY(storageType, storageSize, region, dbEngine) {
+    // Convert arguments to lowercase
+    var options = getObjectWithValuesToLowerCase({ 
+        storageType: storageType,
+        storageSize: storageSize,
+        region: region,
+        dbEngine: dbEngine
+    });
+    
+    // Validate storage type
+    var validTypes = ['aurora', 'gp2', 'gp3', 'io1', 'io2', 'magnetic'];
+    if (validTypes.indexOf(options.storageType) === -1) {
+        throw 'Invalid storage type "' + options.storageType + '". Valid types: ' + validTypes.join(', ');
+    }
+    
+    // Validate storage size
+    if (!options.storageSize || options.storageSize <= 0) {
+        throw 'Storage size must be greater than 0';
+    }
+    
+    // Fetch price per GB-month from API
+    var pricePerGBMonth = fetchAWSRDSStorageGraphQL(options);
+    
+    // Convert to hourly cost
+    // Formula: (price per GB-month) * (storage size in GB) / (hours per month)
+    var hourlyStorageCost = (pricePerGBMonth * options.storageSize) / cfg.hoursPerMonth;
+    
+    return hourlyStorageCost;
 }
-*/
+
+/**
+ * Returns the hourly cost for Aurora I/O requests.
+ * Only applicable to Aurora Standard (not Aurora I/O-Optimized).
+ * Note: Aurora I/O-Optimized instances have no I/O charges.
+ * 
+ * @param {1000000} ioRequests Number of I/O requests per hour
+ * @param {"us-east-1"} region AWS region
+ * @param {"aurora/mysql"} dbEngine Database engine: aurora/mysql or aurora/postgresql
+ * @returns hourly_cost
+ * @customfunction
+ */
+function AWS_RDS_IO_HOURLY(ioRequests, region, dbEngine) {
+    // Convert arguments to lowercase
+    var options = getObjectWithValuesToLowerCase({ 
+        region: region,
+        dbEngine: dbEngine
+    });
+    
+    // Validate dbEngine is Aurora
+    if (!options.dbEngine || options.dbEngine.indexOf('aurora') === -1) {
+        throw 'I/O pricing is only for Aurora databases. Specify "aurora/mysql" or "aurora/postgresql"';
+    }
+    
+    // Validate ioRequests
+    if (!ioRequests || ioRequests < 0) {
+        throw 'I/O requests must be greater than or equal to 0';
+    }
+    
+    // Fetch price per I/O request from API
+    // API returns per-request price (e.g., 2e-7 = $0.0000002, i.e. $0.20 per 1M IOs)
+    var pricePerIO = fetchAWSRDSIOGraphQL(options);
+    
+    // Convert to hourly cost
+    // Formula: (price per I/O request) * (I/O requests per hour)
+    var hourlyIOCost = pricePerIO * ioRequests;
+    
+    return hourlyIOCost;
+}

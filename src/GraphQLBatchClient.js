@@ -119,20 +119,10 @@ function fetchAWSEC2GraphQLBatched(instanceTypes, region, platform, purchaseType
   
   var query = `{ ${aliases.join('\n')} }`;
   
-  Logger.log(`Batched AWS EC2 query for ${instanceTypes.length} instances in ${region} (${purchaseType})`);
-  Logger.log(`Batch query parameters: term=${purchaseTerm}, class=${offeringClass}, payment=${paymentOption}`);
-  Logger.log('First 500 chars of query:');
-  Logger.log(query.substring(0, 500));
-  
   try {
     var json = cachedGraphQL(query);
     
-    Logger.log(`DEBUG: Batch query returned successfully`);
-    Logger.log(`DEBUG: Response has data: ${!!json.data}`);
-    
     if (!json.data) {
-      Logger.log(`ERROR: Batch response has no data field!`);
-      Logger.log(`Response: ${JSON.stringify(json)}`);
       throw new Error('Batch response missing data field');
     }
     
@@ -144,13 +134,10 @@ function fetchAWSEC2GraphQLBatched(instanceTypes, region, platform, purchaseType
       var productData = json.data[safeAlias];
       
       if (!productData) {
-        Logger.log(`WARNING: No data for alias "${safeAlias}" (${type})`);
         return;
       }
       
       if (productData && productData.length > 0) {
-        Logger.log(`Batched: Found ${productData.length} products for ${type}`);
-        
         // Find the product with valid pricing for the requested purchase type
         var product = null;
         var priceValue = null;
@@ -162,7 +149,6 @@ function fetchAWSEC2GraphQLBatched(instanceTypes, region, platform, purchaseType
             var candidatePrice = parseFloat(candidate.prices[0].USD);
             
             if (candidatePrice && candidatePrice > 0) {
-              Logger.log(`Batched: Product [${j}] for ${type} has valid ${purchaseType} price: $${candidatePrice}`);
               product = candidate;
               priceValue = candidatePrice;
               break;
@@ -171,7 +157,6 @@ function fetchAWSEC2GraphQLBatched(instanceTypes, region, platform, purchaseType
         }
         
         if (!product) {
-          Logger.log(`Batched: No valid ${purchaseType} pricing found for ${type} among ${productData.length} products`);
           return; // Skip this instance
         }
         
@@ -211,18 +196,13 @@ function fetchAWSEC2GraphQLBatched(instanceTypes, region, platform, purchaseType
         };
 
         results.push(instanceObj);
-      } else {
-        Logger.log(`No data found for ${type} in batched response`);
       }
     });
     
     return results;
     
   } catch (err) {
-    Logger.log(`❌ Batched query failed: ${err}`);
-    Logger.log(`Stack: ${err.stack}`);
-    Logger.log(`Falling back to individual queries with same parameters...`);
-    // Fallback to individual queries if batch fails - MUST pass all parameters
+    // Fallback to individual queries if batch fails
     return fetchAWSEC2GraphQL(instanceTypes, region, platform, purchaseType, purchaseTerm, offeringClass, paymentOption);
   }
 }
@@ -287,8 +267,6 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
   
   var query = `{ ${aliases.join('\n')} }`;
   
-  Logger.log(`Batched GCP Compute query for ${instanceTypes.length} instances in ${region} (${purchaseType})`);
-  
   try {
     var json = cachedGraphQL(query);
     var results = [];
@@ -300,8 +278,6 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
       var productData = json.data[safeAlias];
       
       if (productData && productData.length > 0) {
-        Logger.log(`Batched GCP: Found ${productData.length} products for ${type}`);
-        
         // Find product with valid pricing (same logic as AWS)
         var product = null;
         var priceValue = null;
@@ -313,7 +289,6 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
             var candidatePrice = parseFloat(candidate.prices[0].USD);
             
             if (candidatePrice && candidatePrice > 0) {
-              Logger.log(`Batched GCP: Product [${j}] for ${type} has valid ${purchaseType} price: $${candidatePrice}`);
               product = candidate;
               priceValue = candidatePrice;
               break;
@@ -322,7 +297,6 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
         }
         
         if (!product) {
-          Logger.log(`Batched GCP: No valid ${purchaseType} pricing found for ${type}`);
           missingTypes.push(type);
           return;
         }
@@ -345,8 +319,6 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
           // Apply CUD discount to on-demand price
           var discount = getGCPCUDDiscount(purchaseTerm, cudType);
           var cudPrice = priceValue * (1 - discount);
-          
-          Logger.log(`Batched: Applying ${cudType} CUD discount to ${type}: ${(discount * 100).toFixed(0)}% off $${priceValue} = $${cudPrice.toFixed(6)}`);
           
           pricingObj.ondemand = priceValue;
           pricingObj.reserved = {};
@@ -382,13 +354,11 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
 
         results.push(instanceObj);
       } else {
-        Logger.log(`No data found for ${type} in batched response`);
         missingTypes.push(type);
       }
     });
     
     if (missingTypes.length > 0) {
-      Logger.log(`Batched GCP: Falling back to individual lookups for ${missingTypes.length} machine type(s)`);
       var fallbackResults = fetchGCPComputeGraphQL(missingTypes, region, purchaseType, purchaseTerm, cudType);
       results = results.concat(fallbackResults);
     }
@@ -396,10 +366,7 @@ function fetchGCPComputeGraphQLBatched(instanceTypes, region, purchaseType, purc
     return results;
     
   } catch (err) {
-    Logger.log(`❌ Batched GCP query failed: ${err}`);
-    Logger.log(`Stack: ${err.stack}`);
-    Logger.log(`Falling back to individual queries with same parameters...`);
-    // Fallback to individual queries if batch fails - MUST pass all parameters
+    // Fallback to individual queries if batch fails
     return fetchGCPComputeGraphQL(instanceTypes, region, purchaseType, purchaseTerm, cudType);
   }
 }
@@ -478,8 +445,6 @@ function fetchAWSEC2ReservedPriceGraphQLBatched(instanceTypes, region, platform,
   
   var query = `{ ${aliases.join('\n')} }`;
   
-  Logger.log(`Batched AWS EC2 reserved pricing query for ${instanceTypes.length} instances`);
-  
   try {
     var json = cachedGraphQL(query);
     var priceMap = {};
@@ -500,7 +465,6 @@ function fetchAWSEC2ReservedPriceGraphQLBatched(instanceTypes, region, platform,
     return priceMap;
     
   } catch (err) {
-    Logger.log(`Batched reserved pricing query failed: ${err}`);
     return {};
   }
 }
@@ -549,8 +513,6 @@ function fetchGCPComputeReservedPriceGraphQLBatched(instanceTypes, region, purch
   
   var query = `{ ${aliases.join('\n')} }`;
   
-  Logger.log(`Batched GCP committed use discount query for ${instanceTypes.length} instances`);
-  
   try {
     var json = cachedGraphQL(query);
     var priceMap = {};
@@ -571,7 +533,6 @@ function fetchGCPComputeReservedPriceGraphQLBatched(instanceTypes, region, purch
     return priceMap;
     
   } catch (err) {
-    Logger.log(`Batched GCP reserved pricing query failed: ${err}`);
     return {};
   }
 }

@@ -3,22 +3,16 @@ function fetchSingleVolumePrice(cloudProvider, cloudProduct, options) {
   if(!parseFloat(options.volumeSize)) throw 'Unable to parse volume units';
   validateVolumeOptions(cloudProvider, cloudProduct, options);
 
-  Logger.log(`DEBUG: fetchSingleVolumePrice for ${cloudProduct}`);
-  Logger.log(`DEBUG: Region: ${options.region}, VolumeType: ${options.volumeType}, StorageType: ${options.storageType}`);
-
   let prod;
   switch (cloudProduct){
   case 'ebs':
     try{
       // Call GraphQL directly for this specific volume type and region
-      Logger.log(`Fetching EBS pricing from GraphQL: ${options.volumeType} in ${options.region}`);
       prod = [fetchAWSEBSGraphQL(options.region, options.volumeType)];
       
       if(!prod[0] || !prod[0].ebs_prices) {
         throw 'No EBS pricing data returned from API.';
       }
-      
-      Logger.log(`✅ EBS pricing fetched successfully`);
     }catch(err){
       throw `Failed to fetch EBS pricing. ${err}`;
     }
@@ -27,7 +21,6 @@ function fetchSingleVolumePrice(cloudProvider, cloudProduct, options) {
     try{
       prod = [fetchGCPLocalSSDGraphQL(options.region)];
     }catch(err){
-      Logger.log(`Failed to fetch GCS pricing via API, using fallback: ${err}`);
       // Fallback to hardcoded price
       prod = [{ 
         localssd: {
@@ -53,12 +46,12 @@ function getVolumePrice(cloudProduct, product, options) {
     case 'iops':
       switch(volumeType){
       case 'io2':
-        if (volumeSize < 32) 
-          storageTypeFilter = 'pricePerTier1IOPSMonth';
-        if (volumeSize > 32 && volumeSize < 64)
-          storageTypeFilter = 'pricePerTier2IOPSMonth';
-        if (volumeSize > 64)
-          storageTypeFilter = 'pricePerTier3IOPSMonth';
+      if (volumeSize <= 32) 
+        storageTypeFilter = 'pricePerTier1IOPSMonth';
+      else if (volumeSize <= 64)
+        storageTypeFilter = 'pricePerTier2IOPSMonth';
+      else
+        storageTypeFilter = 'pricePerTier3IOPSMonth';
         break;
       default:
         storageTypeFilter = 'pricePerIOPSMonth';

@@ -19,7 +19,7 @@ function GCP_COMPUTE_HOURLY(instanceType, region, purchaseType, purchaseTerm, cu
     purchaseType = purchaseType || 'ondemand';
     cudType = cudType || 'flexi';
     
-    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, cudType });
+    var options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, cudType });
     return fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, options);
 }
 
@@ -43,7 +43,7 @@ function GCP_COMPUTE_ALL_BY_REGION(region, purchaseType, purchaseTerm, cudType) 
     purchaseType = purchaseType || 'ondemand';
     cudType = cudType || 'flexi';
     
-    options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, cudType });
+    var options = getObjectWithValuesToLowerCase({ region, purchaseType, purchaseTerm, cudType });
     return fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options);
 }
 
@@ -61,7 +61,7 @@ function GCP_COMPUTE_ALL_BY_REGION(region, purchaseType, purchaseTerm, cudType) 
 function GCP_GCS_HOURLY(region, volumeType, volumeSize) {
     var cloudProvider = 'gcp';
     var cloudProduct = 'gcs';
-    options = getObjectWithValuesToLowerCase({ region, volumeType, volumeSize });
+    var options = getObjectWithValuesToLowerCase({ region, volumeType, volumeSize });
     return fetchSingleVolumePrice(cloudProvider, cloudProduct, options);
 }
 

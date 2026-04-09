@@ -8,6 +8,9 @@ function getScriptPropertyArray(propertyName, defaultValue) {
 }
 
 const cfg = {
+  psApiBase: 'https://api.planetscale.com/v1/organizations/',
+  psApiOrg: PropertiesService.getScriptProperties().getProperty('psApiOrg') || 'planetscale-demo',
+  psApiToken: PropertiesService.getScriptProperties().getProperty('psApiToken'),
   psWebApi: 'https://api.planetscale.com/www/',
   hoursPerMonth: 730,
   awsEc2InstanceFamilyFilter: getScriptPropertyArray('awsEc2InstanceFamilyFilter'), // These limit the number of instance families we check for EC2

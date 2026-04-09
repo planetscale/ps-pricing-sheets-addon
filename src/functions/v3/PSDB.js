@@ -9,7 +9,7 @@
 function PSDB_ALL_BY_REGION(region="us-east") {
     var cloudProvider = 'planetscale';
     var cloudProduct = 'psdb';
-    options = getObjectWithValuesToLowerCase({ region });
+    var options = getObjectWithValuesToLowerCase({ region });
     return fetchRegionalInstanceMatrix(cloudProvider, cloudProduct, options);
 }
 
@@ -25,7 +25,7 @@ function PSDB_ALL_BY_REGION(region="us-east") {
 function PSDB_SKU_BY_REGION(region="us-east") {
     var cloudProvider = 'planetscale';
     var cloudProduct = 'psdb';
-    options = getObjectWithValuesToLowerCase({ region });
+    var options = getObjectWithValuesToLowerCase({ region });
 
     let instanceTypes = [];
     let prods = fetchProducts(cloudProduct, instanceTypes, options);
@@ -80,9 +80,7 @@ function PSDB_INSTANCE_HOURLY(instanceType, region="us-east", dataSizeGB=10, sha
         }
     }
 
-    options = getObjectWithValuesToLowerCase({ region, dataSizeGB, shards, extraReplicas, vtGateOverridePrice, extraVtGateReplicas });
-
-
+    var options = getObjectWithValuesToLowerCase({ region, dataSizeGB, shards, extraReplicas, vtGateOverridePrice, extraVtGateReplicas });
 
     return fetchSingleInstancePrice(cloudProvider, cloudProduct, instanceType, options);
 }
@@ -101,7 +99,7 @@ function PSDB_INSTANCE_HOURLY(instanceType, region="us-east", dataSizeGB=10, sha
 function PSDB_MNGD_TABLET_HOURLY(instanceType, extraReplicas=0) {
     var cloudProvider = 'planetscale';
     var cloudProduct = 'psdb';
-    options = {region:'us-east',};
+    var options = {region:'us-east',};
 
     let prod = fetchProducts(cloudProduct,[instanceType],options)[0];
     let ic = prod.ps_instance_class;
@@ -128,9 +126,12 @@ function PSDB_MNGD_VTGATE_HOURLY(instanceType, extraReplicas=0) {
     if (!vtgName.startsWith('VTG')){
         var cloudProvider = 'planetscale';
         var cloudProduct = 'psdb';
-        options = {region:'us-east',};
+        var options = {region:'us-east',};
 
         let prod = fetchProducts(cloudProduct,[instanceType],options)[0];
+        if (prod.product_type === 'postgres') {
+            throw 'VTGate pricing is not applicable for Postgres instances. Instance: ' + instanceType;
+        }
         vtgName = prod.default_vtgate;
     }
 
@@ -154,12 +155,49 @@ function PSDB_MNGD_VTGATE_HOURLY(instanceType, extraReplicas=0) {
 function PSDB_MNGD_STORAGE_HOURLY(numGB, instanceType="PS_40") {
     var cloudProvider = 'planetscale';
     var cloudProduct = 'psdb';
-    options = {region:'us-east',};
+    var options = {region:'us-east',};
 
     let prod = fetchProducts(cloudProduct,[instanceType],options)[0];
 
     let hourlyPrice = prod.ps_instance_class == 'metal' ? 0 : cfg.managedPrices['TB']/cfg.hoursPerMonth*(numGB/1024);
     return hourlyPrice;
+}
+
+/**
+ * Returns the hourly cost for a VTGate SKU. Note that VTGate pricing is not region-specific.
+ * 
+ * @param {"VTG_5"} vtGateType - VTGate SKU type (e.g., "VTG_5", "VTG_10", "VTG_40")
+ * @returns hourly_cost
+ * @customfunction
+ */
+
+function PSDB_VTGATE_HOURLY(vtGateType) {
+    if (!vtGateType) {
+        throw 'Missing required parameter: vtGateType';
+    }
+    
+    try {
+        let vtg = fetchPSDBVTGates([vtGateType]);
+        
+        if (!vtg || vtg.length === 0) {
+            throw `No VTGate found with name: ${vtGateType}`;
+        }
+        
+        if (vtg.length > 1) {
+            throw `Multiple VTGates found with name: ${vtGateType}`;
+        }
+        
+        // VTGate rate is monthly, convert to hourly
+        let monthlyRate = parseFloat(vtg[0].rate);
+        if (!monthlyRate || monthlyRate === 0) {
+            throw `VTGate ${vtGateType} has no rate or rate is 0`;
+        }
+        
+        return monthlyRate / cfg.hoursPerMonth;
+        
+    } catch(err) {
+        throw `Failed to retrieve VTGate pricing for ${vtGateType}: ${err}`;
+    }
 }
 
 function PSDB_MNGD_COST_BY_CLASS_HOURLY(instanceClass) {
