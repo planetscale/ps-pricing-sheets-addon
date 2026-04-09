@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link rel="stylesheet" href="https://ssl.gstatic.com/docs/script/css/add-ons1.css">
+  <style>
+    .section-header {
+      font-weight: bold;
+      font-size: 13px;
+      margin-top: 16px;
+      margin-bottom: 8px;
+      color: #333;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 4px;
+    }
+    .section-header:first-child {
+      margin-top: 0;
+    }
+    .field-row {
+      margin-bottom: 8px;
+    }
+    .field-row label {
+      display: block;
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 2px;
+    }
+    .field-row input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .hint {
+      font-size: 11px;
+      color: #888;
+      margin-top: 1px;
+    }
+    .button-bar {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+    }
+    #status {
+      margin-top: 12px;
+      font-size: 12px;
+      min-height: 20px;
+    }
+    .status-ok { color: #0d652d; }
+    .status-err { color: #c5221f; }
+    .loading {
+      text-align: center;
+      padding: 40px 0;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading">Loading settings...</div>
+
+  <div id="form" style="display:none;">
+    <div class="section-header">PlanetScale Managed Pricing</div>
+    <div class="hint" style="margin-bottom: 8px;">Monthly rates per vCPU (except TB = per TB)</div>
+
+    <div class="field-row">
+      <label for="mp_memory">Memory ($/vCPU/mo)</label>
+      <input type="number" id="mp_memory" step="0.01">
+    </div>
+    <div class="field-row">
+      <label for="mp_compute">Compute ($/vCPU/mo)</label>
+      <input type="number" id="mp_compute" step="0.01">
+    </div>
+    <div class="field-row">
+      <label for="mp_general">General ($/vCPU/mo)</label>
+      <input type="number" id="mp_general" step="0.01">
+    </div>
+    <div class="field-row">
+      <label for="mp_metal">Metal ($/vCPU/mo)</label>
+      <input type="number" id="mp_metal" step="0.01">
+    </div>
+    <div class="field-row">
+      <label for="mp_tb">Storage ($/TB/mo)</label>
+      <input type="number" id="mp_tb" step="0.01">
+    </div>
+
+    <div class="section-header">AWS Instance Filters</div>
+    <div class="hint" style="margin-bottom: 8px;">Comma-separated lists for bulk pricing queries</div>
+
+    <div class="field-row">
+      <label for="aws_family">Instance Families</label>
+      <input type="text" id="aws_family" placeholder="m5,r6i,c5">
+    </div>
+    <div class="field-row">
+      <label for="aws_size">Instance Sizes</label>
+      <input type="text" id="aws_size" placeholder="large,xlarge,2xlarge">
+    </div>
+
+    <div class="section-header">GCP Instance Filters</div>
+
+    <div class="field-row">
+      <label for="gcp_family">Machine Families</label>
+      <input type="text" id="gcp_family" placeholder="n2,n2d,c2">
+    </div>
+    <div class="field-row">
+      <label for="gcp_size">Machine Sizes</label>
+      <input type="text" id="gcp_size" placeholder="standard-4,highmem-8">
+    </div>
+
+    <div class="button-bar">
+      <button class="action" id="btn-save" onclick="saveSettings()">Save</button>
+      <button id="btn-reset" onclick="resetDefaults()">Reset to Defaults</button>
+    </div>
+
+    <div id="status"></div>
+  </div>
+
+  <script>
+    // Field ID -> config sheet key mapping
+    var FIELD_MAP = {
+      'mp_memory':   'managedPrices.memory',
+      'mp_compute':  'managedPrices.compute',
+      'mp_general':  'managedPrices.general',
+      'mp_metal':    'managedPrices.metal',
+      'mp_tb':       'managedPrices.TB',
+      'aws_family':  'awsEc2InstanceFamilyFilter',
+      'aws_size':    'awsEc2InstanceSizeFilter',
+      'gcp_family':  'gcpComputeInstanceFamilyFilter',
+      'gcp_size':    'gcpComputeInstanceSizeFilter',
+    };
+
+    function loadSettings() {
+      google.script.run
+        .withSuccessHandler(function(config) {
+          Object.keys(FIELD_MAP).forEach(function(fieldId) {
+            var key = FIELD_MAP[fieldId];
+            var el = document.getElementById(fieldId);
+            if (el && config[key] !== undefined) {
+              el.value = config[key];
+            }
+          });
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('form').style.display = 'block';
+        })
+        .withFailureHandler(function(err) {
+          document.getElementById('loading').textContent = 'Failed to load settings: ' + err.message;
+        })
+        .getConfigForSidebar();
+    }
+
+    function saveSettings() {
+      var data = {};
+      Object.keys(FIELD_MAP).forEach(function(fieldId) {
+        var key = FIELD_MAP[fieldId];
+        var el = document.getElementById(fieldId);
+        data[key] = el.value;
+      });
+
+      setButtons(false);
+      showStatus('Saving...', '');
+
+      google.script.run
+        .withSuccessHandler(function() {
+          showStatus('Settings saved.', 'ok');
+          setButtons(true);
+        })
+        .withFailureHandler(function(err) {
+          showStatus('Error: ' + err.message, 'err');
+          setButtons(true);
+        })
+        .saveConfigFromSidebar(data);
+    }
+
+    function resetDefaults() {
+      if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
+
+      setButtons(false);
+      showStatus('Resetting...', '');
+
+      google.script.run
+        .withSuccessHandler(function() {
+          showStatus('Settings reset to defaults.', 'ok');
+          setButtons(true);
+          loadSettings();
+        })
+        .withFailureHandler(function(err) {
+          showStatus('Error: ' + err.message, 'err');
+          setButtons(true);
+        })
+        .resetConfigToDefaults();
+    }
+
+    function showStatus(msg, type) {
+      var el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = type === 'ok' ? 'status-ok' : type === 'err' ? 'status-err' : '';
+      if (type) {
+        setTimeout(function() { el.textContent = ''; }, 5000);
+      }
+    }
+
+    function setButtons(enabled) {
+      document.getElementById('btn-save').disabled = !enabled;
+      document.getElementById('btn-reset').disabled = !enabled;
+    }
+
+    // Load on sidebar open
+    loadSettings();
+  </script>
+</body>
+</html>
